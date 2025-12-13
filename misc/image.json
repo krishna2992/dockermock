@@ -1,0 +1,64 @@
+[{
+    "command": [
+        "python3.10", "-m", "http.server", "8080"
+    ], 
+    "entrypoint": "/app/entrypoint.sh", 
+    "env": {
+        "PATH": "/bin:/sbin:/usr/bin:/usr/sbin:/usr/local/bin:/usr/local/sbin"
+    }, 
+    "workingDir": "/app/garbage", 
+    "mounts": [
+        {
+            "type": "bind", 
+            "source": "/app/garbage", 
+            "target": "/home/krishna/Projects/JAIL/garbage", 
+            "readonly": false
+        }
+    ],
+    "ports":[
+        {
+            "host":8080,
+            "container":8080,
+            "proto":"tcp",
+            "rdr":[]
+        }
+    ]
+}
+,
+{
+    "env":{},
+    "PATH":[
+        "/bin",
+        "/sbin",
+        "/usr/bin",
+        "/usr/sbin",
+        "/usr/local/bin",
+        "/usr/local/sbin"
+    ],
+    "entrypoint": "/app/entrypoint.sh",
+    "command": [
+        "tail",
+        "-f",
+        "/dev/null"
+    ],
+    "volumes": {},
+    "workingDir": "/"
+},{
+    "env":{},
+    "PATH":[
+        "/bin",
+        "/sbin",
+        "/usr/bin",
+        "/usr/sbin",
+        "/usr/local/bin",
+        "/usr/local/sbin"
+    ],
+    "entrypoint": null,
+    "command": [
+        "tail",
+        "-f",
+        "/dev/null"
+    ],
+    "volumes": {},
+    "workingDir": "/"
+}]
