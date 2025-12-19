@@ -35,6 +35,9 @@ if __name__ == '__main__':
     env.setdefault('HOME', '/root')
     env.setdefault('SHELL', '/bin/tcsh')
     env.setdefault('TERM', 'xterm')
+    env.setdefault('PS1',"\\u@\\h:\\w $ ")
+
+
     try:
         os.execvpe(executable, sys.argv[2:], env)
     except FileNotFoundError as e:

@@ -29,3 +29,44 @@ INSERT INTO images (name, tag, json_data) VALUES(
     "workingDir": "/"
 }'
 )
+
+INSERT INTO images (name, tag, json_data) VALUES(
+    'redis',
+    '8.2.3',
+    '{
+    "env":{},
+    "PATH":[
+        "/bin",
+        "/sbin",
+        "/usr/bin",
+        "/usr/sbin",
+        "/usr/local/bin",
+        "/usr/local/sbin"
+    ],
+    "entrypoint": "/entrypoint.sh",
+    "command": null,
+    "volumes": {},
+    "workingDir": "/var/db/redis"
+}'
+)
+
+
+INSERT INTO images (name, tag, json_data) VALUES(
+    'freebsd',
+    '14.1',
+    '{
+    "env":{},
+    "PATH":[
+        "/bin",
+        "/sbin",
+        "/usr/bin",
+        "/usr/sbin",
+        "/usr/local/bin",
+        "/usr/local/sbin"
+    ],
+    "entrypoint": null,
+    "command": ["tail", "-f", "/dev/null"],
+    "volumes": {},
+    "workingDir": "/root"
+}'
+)

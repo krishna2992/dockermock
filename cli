@@ -255,31 +255,32 @@ def create_container(args):
         data['ports'] = ports
 
     volumes = {}
-    for v in args.volume:
-        vol = v.split(':')
-        if len(vol)<2:
-            print('Invalid Volume mount configuration', v)
-            return -1
-        mount_type = classify_mount(v)
-        if mount_type == 'volume':
-            key = vol[0]
-            create_volume(SimpleNamespace(name=key))
-        else:
-            key = os.path.abspath(vol[0])
+    if args.volume:
+        for v in args.volume:
+            vol = v.split(':')
+            if len(vol)<2:
+                print('Invalid Volume mount configuration', v)
+                return -1
+            mount_type = classify_mount(v)
+            if mount_type == 'volume':
+                key = vol[0]
+                create_volume(SimpleNamespace(name=key))
+            else:
+                key = os.path.abspath(vol[0])
         
-        volumes[key] ={
+            volumes[key] ={
                 'type': mount_type,
                 'source':vol[1],
                 'readonly': False
             }
-        if len(vol) == 3:
-            if vol[2] == '':
-                continue
+            if len(vol) == 3:
+                if vol[2] == '':
+                    continue
             
-            elif vol[2] not in ('ro', 'rw'):
-                print(f'Invalid Mount flag "{vol[2]}" Valid values are among (ro, rw). Defaults to "rw"')
-                return -1
-            volumes[key]['readonly'] = vol[2]=='ro' 
+                elif vol[2] not in ('ro', 'rw'):
+                    print(f'Invalid Mount flag "{vol[2]}" Valid values are among (ro, rw). Defaults to "rw"')
+                    return -1
+                volumes[key]['readonly'] = vol[2]=='ro' 
     data['mounts'] = volumes
     data['restart'] = args.restart
     data['rm'] = args.rm

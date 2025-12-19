@@ -602,10 +602,10 @@ class JailManager:
         cont_json['rm']      = data.get('rm', False)
         cid = self.insert_container(name, imgId, cont_json)
         # result, msg = self.create_dataset(image, name, snapshot_name='base')
-        if result:
-            self.conn.rollback()
-            print('Changes rolled back')
-            return -1, 'Failed to create container'
+        # if result:
+        #     self.conn.rollback()
+        #     print('Changes rolled back')
+        #     return -1, 'Failed to create container'
 
         if 'networks' in res and res['networks']:
             rows = []
@@ -617,6 +617,11 @@ class JailManager:
             self.cursor.executemany(query, rows)
         self.link_container_volumes(cont_json['mounts'], cid)
         result, msg = self.create_dataset(image, name, snapshot_name='base')
+        if result:
+            self.conn.rollback()
+            print('Changes rolled back', msg)
+            return -1, 'Failed to create container'
+
         self.conn.commit()        
         return 0, {'id': cid}
         

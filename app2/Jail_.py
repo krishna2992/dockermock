@@ -331,7 +331,8 @@ class Jail:
                     first = command[0]
 
             # Extend args with command
-            args.extend(command)
+            if command:
+                args.extend(command)
             envs = self.kwargs.get('env', {})
             print('kwargs', self.kwargs.get('workingDir'))
             # if self.kwargs.get('kwargs'):

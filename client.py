@@ -3,25 +3,9 @@ import time
 from pprint import pprint
 import json
 data  = {
-    'name': 'python-server3', 
-    'image':    'python:3.10',
-    'networks': ['bridge1'],
-    'workingDir': '/app/garbage',
-    'command': ['python', '-m', 'http.server', '8080'],
-    'mounts':   {
-        '/home/krishna/Projects/JAIL/garbage' : {
-            'type':'bind',
-            'source':'/app/garbage',
-            'readonly':False
-        }
-    },
-    "ports":[
-        {
-            "host":8080,
-            "container":8080,
-            "proto":"tcp"
-        }
-    ]
+    'name': 'redis-server', 
+    'image':    'redis:8.2.3',
+    'networks': ['bridge1']
 }
 
 
