@@ -1,5 +1,6 @@
 import os
 import ctypes 
+import errno
 import socket
 from .libc_ import *
 from .headers import *
@@ -260,4 +261,22 @@ def clear_if_flag(name, flag, sock=True):
     if res < 0:
         errno = ctypes.get_errno()
         raise OSError(errno, f"ioctl SIOCSIFFLAGS failed: {os.strerror(errno)}")
+    
+libc.kldload.argtypes = [ctypes.c_char_p]
+libc.kldload.restype = ctypes.c_int
+
+
+def kldload(module: str):
+    fileid = libc.kldload(module.encode())
+    if fileid == -1:
+        err = ctypes.get_errno()
+
+        # Treat "already loaded" as success
+        if err == errno.EEXIST:
+            return None
+
+        # All other errors are real failures
+        raise OSError(err, f"kldload({module}) failed: {os.strerror(err)}")
+
+    return fileid
     

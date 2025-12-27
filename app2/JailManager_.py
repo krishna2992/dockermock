@@ -26,6 +26,7 @@ CONF_ROOT = './conf'
 VOLUME_MOUNT_ROOT = '/jails/volumes'
 CONTAINER_MOUNT_ROOT = '/jails/containers' 
 
+LOAD_MODULES = ['if_epair', 'if_bridge']
 
 class STATE(Enum):
     CREATED = 0
@@ -76,6 +77,20 @@ class JailManager:
         self.cursor.execute('update containers set status=? where name =?', ('exited', name,))        
         self.conn.commit()
         return 'exited'
+    
+    def load_modules(self):
+        print('Loading Modules ...')
+        for module in LOAD_MODULES:
+            try:
+                id = kldload(module)
+                print(f'Module {module} loaded succesfullly with id: {id}')
+            except Exception as e:
+                print('Failed to load module', module, '\nError:', e)
+    
+    def set_sysctls(self):
+        print('Enable IP forwarding ...')
+        sysctl_set_int("net.inet.ip.forwarding", 1)
+        print('IP forwarding Enabled...')
 
     def get_status_alpha(self, status):
         if status>=100:
@@ -313,17 +328,19 @@ class JailManager:
         if (check_interface_exist(name)):
             return str(ip_interface.ip), None
         
-        try:
-            print(f'Adding Address {network.get("subnet")+"/"+str(prefix)} to table')
-            pfctl_table_add_addrs_list('cni-nat', [network.get('subnet')+'/'+str(prefix)], 0)
-        except Exception as e:
-            print('Failed to start network') 
-            print(e)
-            return "", f"Failed to start network: {name}"           
+        # try:
+        #     print(f'Adding Address {network.get("subnet")+"/"+str(prefix)} to table')
+        #     # pfctl_table_add_addrs_list('cni-nat', [network.get('subnet')+'/'+str(prefix)], 0)
+        # except Exception as e:
+        #     print('Failed to start network') 
+        #     print(e)
+        #     return "", f"Failed to start network: {name}"           
         try:
             if_name = create_interface("bridge")
+            print('Renaming bridge to', name)
             rename_interface(if_name, name)    
             set_interface_group(name, "jailnet")
+            print("Setting IP Address for ", name)
             set_ip_address(name, str(ip_interface.ip), str(ip_interface.network.netmask), broadcast_addr=None)
             print(f"src: {network.get('subnet')}/{prefix}\n Dst: {str(ip_interface.ip)}\n")
             pfctl_append_rdr_rule_generic(
@@ -593,7 +610,7 @@ class JailManager:
             command=command, 
             entrypoint=entrypoint, 
             user=user, 
-            workingDir=data.get('working_dir'),
+            workingDir=data.get('workingDir'),
             networks=networks, 
             mounts=mounts,
             ports=ports

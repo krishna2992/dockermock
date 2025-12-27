@@ -12,6 +12,7 @@ app.config['JSONIFY_PRETTYPRINT_REGULAR'] = True  # enable indent
 
 manager = JailManager()
 
+
 lock = Lock()
 
 def create_lo0_addr():
@@ -187,6 +188,8 @@ atexit.register(handle_close)
 
 if __name__ == '__main__':
     create_lo0_addr()
+    manager.load_modules()
+    manager.set_sysctls()
     run_dns("127.0.0.11", subnetTrie, dnsTree)
     app.run(debug=False, port=5000)
     

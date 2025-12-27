@@ -252,4 +252,39 @@ def mount_host_to_jail(jail_path, host_path, flags):
         return CERROR
     return CENOERR
 
-            
+
+def offset_to_netmask(offset):
+    n = offset
+    numeric_mask =  ((1<<n)-1)<<(32-n)
+    mask= str(int((numeric_mask>>24) & ((1<<8)-1)))+'.'
+    mask+=str(int((numeric_mask>>16) & ((1<<8)-1)))+'.'
+    mask+=str(int((numeric_mask>>8) & ((1<<8)-1)))+'.'
+    mask+=str(int(numeric_mask & ((1<<8)-1)))
+    return mask
+
+
+
+libc.sysctlbyname.argtypes = [
+    ctypes.c_char_p,
+    ctypes.c_void_p,
+    ctypes.POINTER(ctypes.c_size_t),
+    ctypes.c_void_p,
+    ctypes.c_size_t,
+]
+libc.sysctlbyname.restype = ctypes.c_int
+
+
+def sysctl_set_int(name: str, value: int):
+    val = ctypes.c_int(value)
+
+    ret = libc.sysctlbyname(
+        name.encode(),
+        None,
+        None,
+        ctypes.byref(val),
+        ctypes.sizeof(val),
+    )
+
+    if ret != 0:
+        err = ctypes.get_errno()
+        raise OSError(err, f"sysctl {name} failed: {os.strerror(err)}")

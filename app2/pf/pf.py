@@ -6,7 +6,7 @@ import socket
 from typing import List
 from enum import Enum
 libpfctl = ctypes.CDLL(find_library("pfctl"), use_errno=True)
-libpf_util = ctypes.CDLL("./app2/pf/libpf_util.so", use_errno=True)
+libpf_util = ctypes.CDLL(os.path.join(*(os.path.split(__file__)[:-1] + ('libpf_util.so', ))), use_errno=True)
 
 MAXPATHLEN = 1024           # MAXPATHLEN from c headers
 PF_TABLE_NAME_SIZE = 32     # PF_TABLE_NAME_SIZE from c headers
