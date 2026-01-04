@@ -33,4 +33,18 @@ def clone_dataset(dataset: libzfs.ZFSDataset, snapshot_name: str, targer_dataset
     return -1
 
 
+def delete_dataset(ds_path: str):
+    ds = get_dataset(ds_path)
+    if not ds:
+        return -1, "Dataset doesn't exist"
+    if ds.mountpoint:
+        print('Unmount dataset', ds.mountpoint)
+        ds.umount(force=True)
+    
+    try:
+        ds.delete()
+    except Exception as e:
+        print('Failed to destroy dataset:', e)
+        return -1, 'Failed to destroy dataset'
+    return 0, None
     

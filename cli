@@ -203,6 +203,13 @@ def create_volume(args):
     print(f"{'ID':5}{'NAME'}\n{data['ID']:5}{data['name']}")
     return 0
 
+def remove_container(args):
+    res = r.delete(f'{API_BASE}/api/container/{args.name}/delete')
+    if res.status_code != 204:
+        print(res.content)
+        return -1
+    print('Removed container: ', args.name)
+
 def create_container(args):
     # print(args)
     # return
@@ -305,10 +312,17 @@ def get_container(args):
 
 
     
+def attach_network(args):
+    res = r.post(f'{API_BASE}/api/networks/{args.network}/attach', json={"name":args.container})
+    if res.status_code != 201:
+        print(res.content)
+        return -1
+    print('Successfully Attached container {args.container!r} to network {args.network!r}')
+    return 0
 
 # Main CLI
 def main():
-    parser = argparse.ArgumentParser(prog="dockermock", description="Mock Docker CLI Tool")
+    parser = argparse.ArgumentParser(prog="dockermock()", description="Mock Docker CLI Tool")
     subparsers = parser.add_subparsers(dest="command")
 
     # container ps
@@ -318,11 +332,18 @@ def main():
     ps_parser = container_subparsers.add_parser("ps", help="List containers")
     ps_parser.add_argument("--all", action="store_true", help="Show all containers (default shows just running)")
 
+    # Start container
+    # ./cli container start <container_name>
     start_parser = container_subparsers.add_parser("start", help="Start a container")
     start_parser.add_argument("name", help="ID of the container to start")
 
-
-
+    # Remove container
+    # ./cli container rm <container_name>
+    rm_parser = container_subparsers.add_parser("rm", help="Start a container")
+    rm_parser.add_argument("name", help="ID of the container to start")
+    rm_parser.set_defaults(func=remove_container)
+    # Stop container
+    # ./cli container stop <container_name>
     stop_parser = container_subparsers.add_parser("stop", help="Start a container")
     stop_parser.add_argument("name", help="ID of the container to start")
 
@@ -397,6 +418,13 @@ def main():
     networks_start_parser.add_argument("name", help="Name of the network to start")
     networks_start_parser.set_defaults(func=start_network)
 
+    # Attach Parser
+    net_attach_parser = networks_subparsers.add_parser("attach", help="Attach Container to network using network name")
+    net_attach_parser.add_argument('network', help='network name ')
+    net_attach_parser.add_argument('container', help='container name')
+    net_attach_parser.set_defaults(func=attach_network)
+
+    # Network create parser
     create_parser = networks_subparsers.add_parser("create", help="Create a new network")
     create_parser.add_argument("name", help="Name of the network to create")
     create_parser.add_argument("--driver", "-d", default="bridge", help="Network driver (default: bridge)")
@@ -429,6 +457,8 @@ def main():
             args.func(args)
         elif args.subcommand == "inspect":
             args.func(args)
+        elif args.subcommand == "rm":
+            args.func(args)
         else:
             container_parser.print_help()
         
@@ -439,15 +469,24 @@ def main():
             args.func(args)
         elif args.subcommand == "start":
             args.func(args.name)
+        elif args.subcommand == 'attach':
+            args.func(args)
+        else:
+            networks_parser.print_help()
 
     elif args.command == "images":
         if args.subcommand == "ls":
             list_images()
+        else:
+            image_parser.print_help()
 
-    elif args.command == "volumes" and args.subcommand == "ls":
-        list_volumes()
-    elif args.command == "volumes" and args.subcommand == "create":
-        args.func(args)
+    elif args.command == "volumes": 
+        if args.subcommand == "ls":
+            list_volumes()
+        elif args.subcommand == "create":
+            args.func(args)
+        else:
+            volumes_parser.print_help()
     else:
         parser.print_help()
 

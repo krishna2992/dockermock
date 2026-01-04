@@ -183,6 +183,26 @@ def create_volume():
             return jsonify({"error": err}), 400
         return jsonify(res), 201
 
+@app.route('/api/container/<string:name>/delete', methods=['DELETE'])
+def remove_container(name):
+    with lock:
+        err = manager.remove_container(name)
+        if err:
+            return jsonify({"error": err}), 400
+        return "", 204
+
+
+@app.route('/api/networks/<string:network>/attach', methods=['POST'])
+def attach_network(network):
+    data = request.get_json()
+    if not 'name' in data:
+        return jsonify({'error':"name cannot be null"}), 400
+    with lock:
+        err = manager.attach_network(data['name'], network)
+        if err:
+            return jsonify({"error": err}), 400
+        return "", 201
+
 
 atexit.register(handle_close)
 

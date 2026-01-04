@@ -28,7 +28,7 @@ INSERT INTO images (name, tag, json_data) VALUES(
     "volumes": {},
     "workingDir": "/"
 }'
-)
+);
 
 INSERT INTO images (name, tag, json_data) VALUES(
     'redis',
@@ -48,7 +48,7 @@ INSERT INTO images (name, tag, json_data) VALUES(
     "volumes": {},
     "workingDir": "/var/db/redis"
 }'
-)
+);
 
 
 INSERT INTO images (name, tag, json_data) VALUES(
@@ -69,4 +69,24 @@ INSERT INTO images (name, tag, json_data) VALUES(
     "volumes": {},
     "workingDir": "/root"
 }'
-)
+);
+
+INSERT INTO images (name, tag, json_data) VALUES (
+    'nginx',
+    '1.28',
+    '{
+    "env":{},
+    "PATH":[
+        "/bin",
+        "/sbin",
+        "/usr/bin",
+        "/usr/sbin",
+        "/usr/local/bin",
+        "/usr/local/sbin"
+    ],
+    "entrypoint": "/entrypoint.sh",
+    "command": null,
+    "volumes": {},
+    "workingDir": "/root"
+}'  
+);
