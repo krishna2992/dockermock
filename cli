@@ -330,7 +330,7 @@ def main():
     container_subparsers = container_parser.add_subparsers(dest="subcommand")
 
     ps_parser = container_subparsers.add_parser("ps", help="List containers")
-    ps_parser.add_argument("--all", action="store_true", help="Show all containers (default shows just running)")
+    ps_parser.add_argument("-a","--all", action="store_true", help="Show all containers (default shows just running)")
 
     # Start container
     # ./cli container start <container_name>

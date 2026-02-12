@@ -740,3 +740,192 @@ def pfctl_remove_rdr_port_rule(anchor: str, port: int, proto: int) -> int:
         err = ctypes.get_errno()
         raise OSError(err, f"pfctl_clear_ruleset: {os.strerror(err)}")
     print("Ruleset cleared succesfully")
+
+
+libpf_util.remove_nat_port_rule.argtypes = [ctypes.c_int, ctypes.c_char_p, ctypes.c_int, ctypes.c_int]
+libpf_util.remove_nat_port_rule.restype  = ctypes.c_int
+
+def pfctl_remove_nat_port_rule(anchor: str, port: int, proto: int) -> int:
+    """
+    Python wrapper for: int remove_rdr_port_rule(int dev, char* anchor, int port, int proto)
+    """
+    dev = os.open(PF_DEV, os.O_RDWR)
+    if(dev == -1):
+        errno = ctypes.get_errno()
+        raise OSError(errno, f"Failed to open: {PF_DEV}")        
+    try:        
+        anchor_bytes = anchor.encode("utf-8") if anchor is not None else None
+        res =  libpf_util.remove_nat_port_rule(
+            dev, 
+            anchor_bytes, 
+            port, 
+            proto
+        )
+    finally:
+        # Close anyway
+        print('Closing dev')
+        os.close(dev)
+    
+    if res:
+        err = ctypes.get_errno()
+        raise OSError(err, f"pfctl_nat_port_clear: {os.strerror(err)}")
+    print("Ruleset cleared succesfully")
+
+
+libpf_util.clear_nat_ruleset.restype = ctypes.c_int
+
+
+def pfctl_clear_nat_ruleset(anchor:str):
+    dev = os.open(PF_DEV, os.O_RDWR)
+    if(dev == -1):
+        errno = ctypes.get_errno()
+        raise OSError(errno, f"Failed to open: {PF_DEV}")        
+    try:        
+        res = libpf_util.clear_nat_ruleset(
+            dev, 
+            anchor.encode()
+        )
+    finally:
+        # Close anyway
+        print('Closing dev')
+        os.close(dev)
+    
+    if res:
+        err = ctypes.get_errno()
+        raise OSError(err, f"pfctl_clear_nat_ruleset: {os.strerror(err)}")
+    print("Ruleset cleared succesfully")
+
+
+libpf_util.append_nat_rule_generic.argtypes = [
+    ctypes.c_int,                     # int dev
+    ctypes.c_char_p,                  # char* if_name
+    ctypes.c_char_p,                  # char* anchor
+    ctypes.POINTER(FilterAddr),       # filter_addr* src
+    ctypes.c_int,                     # int src_port
+    ctypes.POINTER(FilterAddr),       # filter_addr* dst
+    ctypes.c_int,                     # int dst_port
+    ctypes.POINTER(ctypes.c_char_p),  # char** rdr
+    ctypes.c_int,                     # int rdr_count
+    ctypes.c_int,                     # int d_port
+    ctypes.c_int,                     # int proto
+    ctypes.c_int                      # int quick
+]
+
+# Define return type
+libpf_util.append_nat_rule_generic.restype = ctypes.c_int
+
+
+def pfctl_append_nat_rule_generic(if_name:str, anchor:str, src: str, dst: str,  rdr_address: List[str], rdr_port: int, src_port: int=-1, dst_port:int=-1, af=socket.IPPROTO_TCP, quick=0):
+    dev = os.open(PF_DEV, os.O_RDWR)
+    if(dev == -1):
+        errno = ctypes.get_errno()
+        raise OSError(errno, f"Failed to open: {PF_DEV}")        
+    try:        
+        src_filter = FilterAddr()
+        dst_filter = FilterAddr()
+
+        if src.startswith('(') and src.endswith(')'):
+            src_filter.type = AddrType.PF_ADDR_DYNIFTL.value
+            src_filter.addr = src[1:-1].encode()
+        elif src.startswith('<') and src.endswith('>'):
+            src_filter.type = AddrType.PF_ADDR_TABLE.value
+            src_filter.addr = src[1:-1].encode()
+        else:
+            src_filter.type = AddrType.PF_ADDR_ADDRMASK.value
+            src_filter.addr = src.encode()
+
+        if dst.startswith('(') and dst.endswith(')'):
+            dst_filter.type = AddrType.PF_ADDR_DYNIFTL.value
+            dst_filter.addr = dst[1:-1].encode()
+        elif dst.startswith('<') and dst.endswith('>'):
+            dst_filter.type = AddrType.PF_ADDR_TABLE.value
+            dst_filter.addr = dst[1:-1].encode()
+        else:
+            dst_filter.type = AddrType.PF_ADDR_ADDRMASK.value
+            dst_filter.addr = dst.encode()
+
+        c_ip_list = (ctypes.c_char_p * len(rdr_address))()
+
+        for i, ip in enumerate(rdr_address):
+            c_ip_list[i] = ip.encode('utf-8')
+
+        res = libpf_util.append_nat_rule_generic(
+            dev, 
+            if_name.encode(), 
+            anchor.encode(), 
+            src_filter, 
+            src_port,
+            dst_filter, 
+            dst_port, 
+            c_ip_list,
+            len(rdr_address), 
+            rdr_port,
+            af,
+            quick            
+        )
+    finally:
+        # Close anyway
+        print('Closing dev')
+        os.close(dev)
+    
+    if res:
+        err = ctypes.get_errno()
+        raise OSError(err, f"pfctl_append_nat_rule_generic: {os.strerror(err)}")
+
+libpf_util.append_nat_rule_src_if.argtypes = [
+    ctypes.c_int,                     # int dev
+    ctypes.c_char_p,                  # char* if_name
+    ctypes.c_char_p,                  # char* anchor
+    ctypes.POINTER(FilterAddr),       # filter_addr* src
+    ctypes.c_int,                     # int src_port
+    ctypes.POINTER(FilterAddr),       # filter_addr* dst
+    ctypes.c_int,                     # int dst_port
+    ctypes.POINTER(ctypes.c_char_p),  # char** rdr
+    ctypes.c_int,                     # int rdr_count
+    ctypes.c_int,                     # int d_port
+    ctypes.c_int                      # int proto
+]
+
+# Define return type
+libpf_util.append_nat_rule_src_if.restype = ctypes.c_int
+
+def pfctl_append_nat_rule_src_if(if_name:str, anchor:str, src_if: str, dst_address: str,  rdr_address: List[str], rdr_port: int, src_port: int=-1, dst_port:int=-1, af=socket.IPPROTO_TCP):
+    dev = os.open(PF_DEV, os.O_RDWR)
+    if(dev == -1):
+        errno = ctypes.get_errno()
+        raise OSError(errno, f"Failed to open: {PF_DEV}")        
+    try:        
+        src = FilterAddr()
+        dst = FilterAddr()
+        src.type = AddrType.PF_ADDR_ADDRMASK.value
+        src.addr = src_if.encode()
+        dst.type = AddrType.PF_ADDR_DYNIFTL.value
+        dst.addr = dst_address.encode()
+
+
+        c_ip_list = (ctypes.c_char_p * len(rdr_address))()
+
+        for i, ip in enumerate(rdr_address):
+            c_ip_list[i] = ip.encode('utf-8')
+
+        res = libpf_util.append_rdr_rule_src_if(
+            dev, 
+            if_name.encode(), 
+            anchor.encode(), 
+            src, 
+            src_port,
+            dst, 
+            dst_port, 
+            c_ip_list,
+            len(rdr_address), 
+            rdr_port,
+            af            
+        )
+    finally:
+        # Close anyway
+        print('Closing dev')
+        os.close(dev)
+    
+    if res:
+        err = ctypes.get_errno()
+        raise OSError(err, f"pfctl_append_rdr_rule_src_if: {os.strerror(err)}")

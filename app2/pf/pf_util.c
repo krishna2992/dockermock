@@ -66,6 +66,32 @@ int clear_ruleset(int dev, char* anchor)
     return 0;
 }
 
+int clear_nat_ruleset(int dev, char* anchor)
+{
+    struct pfioc_trans pt = {0};
+    struct pfioc_trans_e pte = {0};
+    pt.size = 1;
+    pt.esize = sizeof(pte);
+    pt.array = &pte;
+
+    pte.rs_num = PF_RULESET_NAT;
+    strlcpy(pte.anchor, anchor, sizeof(pte.anchor));
+    
+    if (ioctl(dev, DIOCXBEGIN, &pt) < 0) {
+        perror("DIOCXBEGIN");
+        return 1;
+    }
+
+
+    if (ioctl(dev, DIOCXCOMMIT, &pt) < 0) 
+    {
+        perror("DIOCXCOMMIT");
+        return 1;
+    }
+    return 0;
+}
+
+
 /*
 * convert cidr int to 32 bit mask
 */
@@ -1451,5 +1477,729 @@ int remove_rdr_port_rule(int dev, char* anchor, int port, int proto)
             return -1;
         }
     }
+    return 0;
+}
+
+int add_nat_rule_generic(int dev, char* if_name, char* anchor, filter_addr* src, int src_port, filter_addr* dst, int dst_port,
+                char** rdr, int rdr_count, int d_port, int proto)
+{
+    struct pfioc_pooladdr paddr = {0};
+    struct pfioc_trans pt = {0}; 
+    struct pfioc_rule pr = {0};
+    struct pfioc_trans_e pte = {0};
+    struct pf_rule *r;
+    int i=0, neg=0;
+    pt.size = 1;
+    pt.esize = sizeof(pte);
+    pt.array = &pte;
+
+    pte.rs_num = PF_RULESET_NAT;
+    strlcpy(pte.anchor, anchor, sizeof(pte.anchor));
+    
+    if (ioctl(dev, DIOCXBEGIN, &pt) < 0) {
+        perror("DIOCXBEGIN");
+        return 1;
+    }
+
+    
+    if (ioctl(dev, DIOCBEGINADDRS, &paddr) < 0) {
+        perror("DIOCBEGINADDRS");
+        return 1;
+    }
+
+    for(i=0;  i<rdr_count; i++)
+    {
+        paddr.addr.addr.type = PF_ADDR_DYNIFTL;
+        paddr.addr.ifname[0] = '\0';
+        strlcpy(paddr.addr.addr.v.ifname, rdr[i], sizeof(paddr.addr.addr.v.ifname));
+        paddr.addr.addr.v.a.mask.v4.s_addr = 0xffffffff;
+
+        /*
+        if (fill_pf_addr_and_mask(rdr[i], &paddr.addr.addr) < 0) {
+            fprintf(stderr, "Failed to parse rdr address\n");
+            return 1;
+        }
+        */
+
+        if (ioctl(dev, DIOCADDADDR, &paddr) < 0) {
+            perror("DIOCADDADDR");
+            return 1;
+        }    
+    }
+    
+    pr.ticket = pte.ticket;
+    pr.pool_ticket = paddr.ticket;
+    strlcpy(pr.anchor, anchor, sizeof(pr.anchor));
+    
+    r            = &pr.rule;
+    r->action    = PF_NAT ;
+    r->af        = AF_INET;
+    r->proto     = proto;
+    r->direction = PF_INOUT;
+    // r->natpass   = NATPASS;
+    r->rtableid  = ALLTABLE;
+    
+    
+    if(if_name && strnlen(if_name, sizeof(r->ifname))>0)
+    {
+        if(if_name[0] == '!'){
+            strlcpy(r->ifname, if_name+1, sizeof(r->ifname)-1);
+            r->ifnot = 1;
+        }else{
+            strlcpy(r->ifname, if_name, sizeof(r->ifname));
+        }
+    }
+
+    if(dst_port >0)
+    {
+        
+        r->dst.port_op = PF_OP_EQ;
+        r->dst.port[0] = htons(dst_port);  
+    }
+    else{
+        r->dst.port_op = PF_OP_NONE;        
+    }
+    
+    if(src_port >0)
+    {
+        r->src.port_op = PF_OP_EQ;
+        r->src.port[0] = htons(src_port);  
+    }
+    else{
+        r->src.port_op = PF_OP_NONE;        
+    }
+    
+    r->rpool.proxy_port[0] = 50001;
+    r->rpool.proxy_port[1] = 65535;
+    r->rpool.opts          = PF_POOL_ROUNDROBIN;              
+
+
+    neg = 0;
+    if(src != NULL)
+    {
+        if(src->addr[0] == '!')
+            neg=1;
+        printf("Src -addr: %s\nNeg = %d\nSrcAddr: %s\n", src->addr+neg, neg, src->addr);
+        if(src->type == PF_ADDR_ADDRMASK)
+        {
+            
+            if (fill_pf_addr_and_mask(src->addr+neg, &r->src.addr) < 0) {
+                fprintf(stderr, "Failed to parse rdr address\n");
+                return -1;
+            }        
+            r->src.addr.type = PF_ADDR_ADDRMASK;
+            r->src.neg = neg;
+        }
+        else if (src->type == PF_ADDR_DYNIFTL) {
+            strlcpy(r->src.addr.v.ifname, src->addr+neg, sizeof(r->src.addr.v.ifname));
+            r->src.addr.type = PF_ADDR_DYNIFTL;
+            r->src.addr.v.a.mask.v4.s_addr = 0xffffffff;
+            r->src.neg = neg;
+        }
+        else if(src->type == PF_ADDR_TABLE){
+            strlcpy(r->src.addr.v.tblname, src->addr+neg, sizeof(r->src.addr.v.tblname));
+            r->src.addr.type = PF_ADDR_TABLE;
+            r->src.addr.v.a.mask.v4.s_addr = 0xffffffff;
+            r->src.neg = neg;
+        }
+        else{
+            printf("Invalid Address type\n");
+            return -11;
+        }    
+    }
+
+    neg = 0;
+    if(dst != NULL)
+    {
+        if(dst->addr[0] == '!')
+            neg =1;
+
+        if(dst->type == PF_ADDR_ADDRMASK)
+        {
+            if (fill_pf_addr_and_mask(dst->addr+neg, &r->dst.addr) < 0) {
+                fprintf(stderr, "Failed to parse rdr address\n");
+                return -1;
+            }        
+            r->dst.addr.type = PF_ADDR_ADDRMASK;
+            r->dst.neg = neg;
+        }
+        else if (dst->type == PF_ADDR_DYNIFTL) {
+            strlcpy(r->dst.addr.v.ifname, dst->addr+neg, sizeof(r->dst.addr.v.ifname));
+            r->dst.addr.type = PF_ADDR_DYNIFTL;
+            r->dst.addr.v.a.mask.v4.s_addr = 0xffffffff;
+            r->dst.neg = neg;
+        }
+        else if(dst->type == PF_ADDR_TABLE){
+            strlcpy(r->dst.addr.v.tblname, dst->addr+neg, sizeof(r->dst.addr.v.tblname));
+            r->dst.addr.type = PF_ADDR_TABLE;
+            r->dst.addr.v.a.mask.v4.s_addr = 0xffffffff;
+            r->dst.neg = neg;
+        }
+        else{
+            printf("Invalid Address type\n");
+            return -1;
+        }    
+    }
+    
+    if (ioctl(dev, DIOCADDRULE, &pr) < 0) 
+    {
+        perror("DIOCADDRULE");
+        return 1;
+    }
+
+    if (ioctl(dev, DIOCXCOMMIT, &pt) < 0) 
+    {
+        perror("DIOCXCOMMIT");
+        return 1;
+    }
+    printf("Rule Added Succesfully\n");
+    return 0;
+}
+
+
+
+int add_nat_rule(int dev, char* if_name, char* anchor, filter_addr* src, int src_port, filter_addr* dst, int dst_port,
+                char** rdr, int rdr_count, int d_port, int proto, int quick)
+{
+    struct pfioc_rule pr;
+    u_int32_t ticket, pool_ticket;
+    struct pf_rule* r;
+    struct pfioc_pooladdr paddr = {0};
+    int i=0, neg=0;
+
+    if(!ruleset_exists(dev, anchor, PF_NAT)){
+        return add_nat_rule_generic(dev, if_name, anchor, src, src_port, dst, dst_port, rdr, rdr_count, d_port, proto);
+    }
+    memset(&pr, 0, sizeof(pr));
+    pr.action = PF_CHANGE_GET_TICKET;
+    pr.rule.action = PF_NAT;
+    strlcpy(pr.anchor, anchor, sizeof(pr.anchor));
+    if (ioctl(dev, DIOCCHANGERULE, &pr) < 0) 
+    {
+        perror("ioctl get ticket");
+        printf("Ruleset Doesn't Exists\n");
+        return -1;
+    }
+
+    ticket = pr.ticket;
+    memset(&paddr, 0, sizeof(struct pfioc_pooladdr));
+    strlcpy(paddr.anchor, anchor, sizeof(paddr.anchor));
+    if (ioctl(dev, DIOCBEGINADDRS, &paddr) < 0) 
+    {
+        perror("DIOCBEGINADDRS");
+        return 1;
+    }
+
+    pool_ticket = paddr.ticket;
+    for(i=0;  i<rdr_count; i++)
+    {
+        paddr.addr.addr.type = PF_ADDR_ADDRMASK;
+        if (fill_pf_addr_and_mask(rdr[i], &paddr.addr.addr) < 0) {
+            fprintf(stderr, "Failed to parse rdr address\n");
+            return 1;
+        }
+    
+
+        if (ioctl(dev, DIOCADDADDR, &paddr) < 0) {
+            perror("DIOCADDADDR");
+            return 1;
+        }    
+    }
+
+    
+    pr.ticket = ticket;
+    pr.pool_ticket = pool_ticket;
+    pr.action = PF_CHANGE_ADD_TAIL;
+    strlcpy(pr.anchor, anchor, sizeof(pr.anchor));
+
+    r = &pr.rule;
+    r->action = PF_NAT;
+    r->af = AF_INET;
+    r->proto = proto;
+    r->direction = PF_INOUT;
+    r->natpass = 1;
+    r->rtableid = -1;
+    r->quick = quick;
+
+
+    if(if_name && strnlen(if_name, sizeof(r->ifname))>0)
+    {
+        if(if_name[0] == '!'){
+            strlcpy(r->ifname, if_name+1, sizeof(r->ifname)-1);
+            r->ifnot = 1;
+        }else{
+            strlcpy(r->ifname, if_name, sizeof(r->ifname));
+        }
+    }
+    
+
+    if(dst_port >0)
+    {
+        r->dst.port_op = PF_OP_EQ;
+        r->dst.port[0] = htons(dst_port);  
+    }
+    else{
+        r->dst.port_op = PF_OP_NONE;        
+    }
+    
+    if(src_port >0)
+    {
+        r->src.port_op = PF_OP_EQ;
+        r->src.port[0] = htons(src_port);  
+    }
+    else{
+        r->src.port_op = PF_OP_NONE;        
+    }
+    
+    r->rpool.proxy_port[0] = d_port; 
+    r->rpool.opts          = PF_POOL_ROUNDROBIN;              
+
+    neg = 0;
+    if(src != NULL)
+    {
+        if(src->addr[0] == '!')
+            neg=1;
+        printf("Src -addr: %s\nNeg = %d\nSrcAddr: %s\n", src->addr+neg, neg, src->addr);
+        if(src->type == PF_ADDR_ADDRMASK)
+        {
+            
+            if (fill_pf_addr_and_mask(src->addr+neg, &r->src.addr) < 0) {
+                fprintf(stderr, "Failed to parse rdr address\n");
+                return -1;
+            }        
+            r->src.addr.type = PF_ADDR_ADDRMASK;
+            r->src.neg = neg;
+        }
+        else if (src->type == PF_ADDR_DYNIFTL) {
+            strlcpy(r->src.addr.v.ifname, src->addr+neg, sizeof(r->src.addr.v.ifname));
+            r->src.addr.type = PF_ADDR_DYNIFTL;
+            r->src.addr.v.a.mask.v4.s_addr = 0xffffffff;
+            r->src.neg = neg;
+        }
+        else if(src->type == PF_ADDR_TABLE){
+            strlcpy(r->src.addr.v.tblname, src->addr+neg, sizeof(r->src.addr.v.tblname));
+            r->src.addr.type = PF_ADDR_TABLE;
+            r->src.addr.v.a.mask.v4.s_addr = 0xffffffff;
+            r->src.neg = neg;
+        }
+        else{
+            printf("Invalid Address type\n");
+            return -11;
+        }    
+    }
+
+    neg = 0;
+    if(dst != NULL)
+    {
+        if(dst->addr[0] == '!')
+            neg =1;
+
+        if(dst->type == PF_ADDR_ADDRMASK)
+        {
+            if (fill_pf_addr_and_mask(dst->addr+neg, &r->dst.addr) < 0) {
+                fprintf(stderr, "Failed to parse rdr address\n");
+                return -1;
+            }        
+            r->dst.addr.type = PF_ADDR_ADDRMASK;
+            r->dst.neg = neg;
+        }
+        else if (dst->type == PF_ADDR_DYNIFTL) {
+            strlcpy(r->dst.addr.v.ifname, dst->addr+neg, sizeof(r->dst.addr.v.ifname));
+            r->dst.addr.type = PF_ADDR_DYNIFTL;
+            r->dst.addr.v.a.mask.v4.s_addr = 0xffffffff;
+            r->dst.neg = neg;
+        }
+        else if(dst->type == PF_ADDR_TABLE){
+            strlcpy(r->dst.addr.v.tblname, dst->addr+neg, sizeof(r->dst.addr.v.tblname));
+            r->dst.addr.type = PF_ADDR_TABLE;
+            r->dst.addr.v.a.mask.v4.s_addr = 0xffffffff;
+            r->dst.neg = neg;
+        }
+        else{
+            printf("Invalid Address type\n");
+            return -1;
+        }    
+    }
+    
+    if (ioctl(dev, DIOCCHANGERULE, &pr) < 0) {
+        perror("ioctl add_rule");
+        return 1;
+    }
+
+    printf("Rule appended successfully.\n");
+    return 0;
+}
+
+int remove_nat_port_rule(int dev, char* anchor, int port, int proto)
+{
+    
+    struct pfioc_rule pr;
+    u_int32_t ticket, change_ticket;
+    struct pf_rule* r;
+    int i=0, total=0, pos=0;
+    int rule_positions[16];
+
+    if(!ruleset_exists(dev, anchor, PF_NAT)){
+        printf("Warning: Ruleset Doesn't Exist\n");
+        return 0;
+    }
+
+    pr.rule.action = PF_NAT;
+    strlcpy(pr.anchor, anchor, sizeof(pr.anchor));
+    if(ioctl(dev, DIOCGETRULES, &pr) < 0){
+        perror("DIOCGETRULES");
+        return -1;
+    }
+    total = pr.nr;
+    printf("Total Rules: %d\n", total);
+    for(i=0; i< total; i++)
+    {
+        pr.rule.action = PF_NAT;
+        strlcpy(pr.anchor, anchor, sizeof(pr.anchor));
+        pr.nr = i;
+        if(ioctl(dev, DIOCGETRULE, &pr) < 0){
+            perror("DIOCGETRULE");
+            return -1;
+        }
+
+        printf("%d: %d: %d\n", i, ntohs(pr.rule.dst.port[0]), pr.rule.proto);
+        if(pr.rule.dst.port[0] == htons(port) && pr.rule.proto == proto){
+            printf("Found Rule at %d\n", i);
+            /*
+            if(remove_nth_rule(dev, i, anchor, PF_RDR) < 0){
+                printf("Failed to remove rule\n");
+                return -1;
+            }
+            printf("Removed Rule at %d\n", i);
+            */
+            rule_positions[pos++] = i;
+        }
+    }
+    if(total == pos){
+        printf("Total == nr\nClearing Ruleset\n");
+        return clear_nat_ruleset(dev, anchor);
+    }
+    
+    for(i=0; i< pos; i++){
+        printf("Matching Rule found at: %d ", rule_positions[i]);
+        if(remove_nth_rule(dev, rule_positions[i]-i, anchor, PF_NAT)<0){
+            printf("Failed to clear rule\n");
+            return -1;
+        }
+    }
+    return 0;
+}
+
+
+int append_nat_rule_src_if(int dev, char* if_name, char* anchor, filter_addr* src, int src_port, filter_addr* dst, int dst_port,
+                char** rdr, int rdr_count, int d_port, int proto)
+{
+    struct pfioc_rule pr;
+    u_int32_t ticket, pool_ticket;
+    struct pf_rule* r;
+    struct pfioc_pooladdr paddr = {0};
+    int i=0;
+
+
+    memset(&pr, 0, sizeof(pr));
+    pr.action = PF_CHANGE_GET_TICKET;
+    pr.rule.action = PF_NAT;
+    strlcpy(pr.anchor, anchor, sizeof(pr.anchor));
+    if (ioctl(dev, DIOCCHANGERULE, &pr) < 0) 
+    {
+        perror("ioctl get ticket");
+        return 1;
+    }
+
+    ticket = pr.ticket;
+    memset(&paddr, 0, sizeof(struct pfioc_pooladdr));
+    strlcpy(paddr.anchor, anchor, sizeof(paddr.anchor));
+    if (ioctl(dev, DIOCBEGINADDRS, &paddr) < 0) 
+    {
+        perror("DIOCBEGINADDRS");
+        return 1;
+    }
+
+    pool_ticket = paddr.ticket;
+    for(i=0;  i<rdr_count; i++)
+    {
+        paddr.addr.addr.type = PF_ADDR_ADDRMASK;
+        if (fill_pf_addr_and_mask(rdr[i], &paddr.addr.addr) < 0) {
+            fprintf(stderr, "Failed to parse rdr address\n");
+            return 1;
+        }
+    
+
+        if (ioctl(dev, DIOCADDADDR, &paddr) < 0) {
+            perror("DIOCADDADDR");
+            return 1;
+        }    
+    }
+
+    
+    pr.ticket = ticket;
+    pr.pool_ticket = pool_ticket;
+    pr.action = PF_CHANGE_ADD_TAIL;
+    strlcpy(pr.anchor, anchor, sizeof(pr.anchor));
+
+    r = &pr.rule;
+    r->action = PF_NAT;
+    r->af = AF_INET;
+    r->proto = proto;
+    r->direction = PF_INOUT;
+    r->natpass = 1;
+    r->rtableid = -1;
+    strlcpy(r->ifname, if_name, sizeof(r->ifname));
+    
+
+    if(dst_port >0)
+    {
+        r->dst.port_op = PF_OP_EQ;
+        r->dst.port[0] = htons(dst_port);  
+    }
+    else{
+        r->dst.port_op = PF_OP_NONE;        
+    }
+    
+    if(src_port >0)
+    {
+        r->src.port_op = PF_OP_EQ;
+        r->src.port[0] = htons(src_port);  
+    }
+    else{
+        r->src.port_op = PF_OP_NONE;        
+    }
+    
+    r->rpool.proxy_port[0] = d_port; 
+    r->rpool.opts          = PF_POOL_ROUNDROBIN;              
+
+    if(src->type == PF_ADDR_ADDRMASK)
+    {
+        if (fill_pf_addr_and_mask(src->addr, &r->src.addr) < 0) {
+            fprintf(stderr, "Failed to parse rdr address\n");
+            return 1;
+        }        
+        r->src.addr.type = PF_ADDR_ADDRMASK;
+    }
+    else if (src->type == PF_ADDR_DYNIFTL) {
+        strlcpy(r->src.addr.v.ifname, src->addr, sizeof(r->src.addr.v.ifname));
+        r->src.addr.type = PF_ADDR_DYNIFTL;
+        r->src.addr.v.a.mask.v4.s_addr = 0xffffffff;
+    }
+    else if(src->type == PF_ADDR_TABLE){
+        strlcpy(r->src.addr.v.tblname, src->addr, sizeof(r->src.addr.v.tblname));
+        r->src.addr.type = PF_ADDR_TABLE;
+        r->src.addr.v.a.mask.v4.s_addr = 0xffffffff;
+    }
+    else{
+        printf("Invalid Address type\n");
+        return 1;
+    }
+
+    if(dst->type == PF_ADDR_ADDRMASK)
+    {
+        if (fill_pf_addr_and_mask(dst->addr, &r->dst.addr) < 0) {
+            fprintf(stderr, "Failed to parse rdr address\n");
+            return 1;
+        }        
+        r->dst.addr.type = PF_ADDR_ADDRMASK;
+    }
+    else if (dst->type == PF_ADDR_DYNIFTL) {
+        strlcpy(r->dst.addr.v.ifname, dst->addr, sizeof(r->dst.addr.v.ifname));
+        r->dst.addr.type = PF_ADDR_DYNIFTL;
+        r->dst.addr.v.a.mask.v4.s_addr = 0xffffffff;
+    }
+    else if(dst->type == PF_ADDR_TABLE){
+        strlcpy(r->dst.addr.v.tblname, dst->addr, sizeof(r->dst.addr.v.tblname));
+        r->dst.addr.type = PF_ADDR_TABLE;
+        r->dst.addr.v.a.mask.v4.s_addr = 0xffffffff;
+    }
+    else{
+        printf("Invalid Address type\n");
+        return 1;
+    }
+
+    
+    if (ioctl(dev, DIOCCHANGERULE, &pr) < 0) {
+        perror("ioctl add_rule");
+        return 1;
+    }
+
+    printf("Rule appended successfully.\n");
+    return 0;
+}
+
+int append_nat_rule_generic(int dev, char* if_name, char* anchor, filter_addr* src, int src_port, filter_addr* dst, int dst_port,
+                char** rdr, int rdr_count, int d_port, int proto, int quick)
+{
+    struct pfioc_rule pr;
+    u_int32_t ticket, pool_ticket;
+    struct pf_rule* r;
+    struct pfioc_pooladdr paddr = {0};
+    int i=0, neg=0;
+
+    if(!ruleset_exists(dev, anchor, PF_NAT)){
+        return add_nat_rule_generic(dev, if_name, anchor, src, src_port, dst, dst_port, rdr, rdr_count, d_port, proto);
+    }
+    memset(&pr, 0, sizeof(pr));
+    pr.action = PF_CHANGE_GET_TICKET;
+    pr.rule.action = PF_NAT;
+    strlcpy(pr.anchor, anchor, sizeof(pr.anchor));
+    if (ioctl(dev, DIOCCHANGERULE, &pr) < 0) 
+    {
+        perror("ioctl get ticket");
+        printf("Ruleset Doesn't Exists\n");
+        return -1;
+    }
+
+    ticket = pr.ticket;
+    memset(&paddr, 0, sizeof(struct pfioc_pooladdr));
+    strlcpy(paddr.anchor, anchor, sizeof(paddr.anchor));
+    if (ioctl(dev, DIOCBEGINADDRS, &paddr) < 0) 
+    {
+        perror("DIOCBEGINADDRS");
+        return 1;
+    }
+
+    pool_ticket = paddr.ticket;
+    for(i=0;  i<rdr_count; i++)
+    {
+        paddr.addr.addr.type = PF_ADDR_DYNIFTL;
+        // if (fill_pf_addr_and_mask(rdr[i], &paddr.addr.addr) < 0) {
+        //     fprintf(stderr, "Failed to parse rdr address\n");
+        //     return 1;
+        // }
+        strlcpy(paddr.addr.addr.v.ifname, rdr[i], sizeof(paddr.addr.addr.v.ifname));
+        paddr.addr.addr.v.a.mask.v4.s_addr = 0xffffffff;
+        
+
+        if (ioctl(dev, DIOCADDADDR, &paddr) < 0) {
+            perror("DIOCADDADDR");
+            return 1;
+        }    
+    }
+
+    
+    pr.ticket = ticket;
+    pr.pool_ticket = pool_ticket;
+    pr.action = PF_CHANGE_ADD_TAIL;
+    strlcpy(pr.anchor, anchor, sizeof(pr.anchor));
+
+    r = &pr.rule;
+    r->action = PF_NAT;
+    r->af = AF_INET;
+    r->proto = proto;
+    r->direction = PF_INOUT;
+    // r->natpass = 1;
+    r->rtableid = -1;
+    r->quick = quick;
+
+
+    if(if_name && strnlen(if_name, sizeof(r->ifname))>0)
+    {
+        if(if_name[0] == '!'){
+            strlcpy(r->ifname, if_name+1, sizeof(r->ifname)-1);
+            r->ifnot = 1;
+        }else{
+            strlcpy(r->ifname, if_name, sizeof(r->ifname));
+        }
+    }
+    
+
+    if(dst_port >0)
+    {
+        r->dst.port_op = PF_OP_EQ;
+        r->dst.port[0] = htons(dst_port);  
+    }
+    else{
+        r->dst.port_op = PF_OP_NONE;        
+    }
+    
+    if(src_port >0)
+    {
+        r->src.port_op = PF_OP_EQ;
+        r->src.port[0] = htons(src_port);  
+    }
+    else{
+        r->src.port_op = PF_OP_NONE;        
+    }
+    
+    r->rpool.proxy_port[0] = 50001; 
+    r->rpool.proxy_port[1] = 65535; 
+    r->rpool.opts          = PF_POOL_ROUNDROBIN;              
+
+    neg = 0;
+    if(src != NULL)
+    {
+        if(src->addr[0] == '!')
+            neg=1;
+        printf("Src -addr: %s\nNeg = %d\nSrcAddr: %s\n", src->addr+neg, neg, src->addr);
+        if(src->type == PF_ADDR_ADDRMASK)
+        {
+            
+            if (fill_pf_addr_and_mask(src->addr+neg, &r->src.addr) < 0) {
+                fprintf(stderr, "Failed to parse rdr address\n");
+                return -1;
+            }        
+            r->src.addr.type = PF_ADDR_ADDRMASK;
+            r->src.neg = neg;
+        }
+        else if (src->type == PF_ADDR_DYNIFTL) {
+            strlcpy(r->src.addr.v.ifname, src->addr+neg, sizeof(r->src.addr.v.ifname));
+            r->src.addr.type = PF_ADDR_DYNIFTL;
+            r->src.addr.v.a.mask.v4.s_addr = 0xffffffff;
+            r->src.neg = neg;
+        }
+        else if(src->type == PF_ADDR_TABLE){
+            strlcpy(r->src.addr.v.tblname, src->addr+neg, sizeof(r->src.addr.v.tblname));
+            r->src.addr.type = PF_ADDR_TABLE;
+            r->src.addr.v.a.mask.v4.s_addr = 0xffffffff;
+            r->src.neg = neg;
+        }
+        else{
+            printf("Invalid Address type\n");
+            return -11;
+        }    
+    }
+
+    neg = 0;
+    if(dst != NULL)
+    {
+        if(dst->addr[0] == '!')
+            neg =1;
+
+        if(dst->type == PF_ADDR_ADDRMASK)
+        {
+            if (fill_pf_addr_and_mask(dst->addr+neg, &r->dst.addr) < 0) {
+                fprintf(stderr, "Failed to parse rdr address\n");
+                return -1;
+            }        
+            r->dst.addr.type = PF_ADDR_ADDRMASK;
+            r->dst.neg = neg;
+        }
+        else if (dst->type == PF_ADDR_DYNIFTL) {
+            strlcpy(r->dst.addr.v.ifname, dst->addr+neg, sizeof(r->dst.addr.v.ifname));
+            r->dst.addr.type = PF_ADDR_DYNIFTL;
+            r->dst.addr.v.a.mask.v4.s_addr = 0xffffffff;
+            r->dst.neg = neg;
+        }
+        else if(dst->type == PF_ADDR_TABLE){
+            strlcpy(r->dst.addr.v.tblname, dst->addr+neg, sizeof(r->dst.addr.v.tblname));
+            r->dst.addr.type = PF_ADDR_TABLE;
+            r->dst.addr.v.a.mask.v4.s_addr = 0xffffffff;
+            r->dst.neg = neg;
+        }
+        else{
+            printf("Invalid Address type\n");
+            return -1;
+        }    
+    }
+    
+    if (ioctl(dev, DIOCCHANGERULE, &pr) < 0) {
+        perror("ioctl add_rule");
+        return 1;
+    }
+
+    printf("Rule appended successfully.\n");
     return 0;
 }

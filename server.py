@@ -113,6 +113,13 @@ def get_images():
         return jsonify(images), 200
     return {"error":"error"}, 500
 
+@app.route("/api/images/<string:name>", methods=['GET'])
+def get_image(name):
+    with lock:
+        img, err = manager.get_image(name)
+        if err:
+            return jsonify({'error':err}), 400
+        return jsonify(img), 200
 
 @app.route("/api/networks/<network>", methods=['DELETE'])
 def delete_network(network):

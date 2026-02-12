@@ -90,6 +90,7 @@ class JailManager:
     def set_sysctls(self):
         print('Enable IP forwarding ...')
         sysctl_set_int("net.inet.ip.forwarding", 1)
+        # sysctl_set_int("net.pf.filter_local", 1)
         print('IP forwarding Enabled...')
 
     def get_status_alpha(self, status):
@@ -758,3 +759,12 @@ class JailManager:
             print('Failed to attach network:', e)
             return 'Failed to attach network'
         return None
+
+    def get_image(self, img_name):
+        name, tag = img_name.split(':')
+        res = self.cursor.execute('SELECT * from images where name=? and tag=?', (name,tag,)).fetchone()
+        if not res:
+            return None, 'No such Image'
+        
+        columns = [col[0] for col in self.cursor.description]
+        return dict(zip(columns, res)), None
