@@ -15,8 +15,8 @@ from .helpers import *
 import ctypes
 from app2.dns import SubnetTrie, DnsTree
 from app2.network import *
-from app2.zfs import clone_dataset, get_dataset
-from app2.pf.pf import pfctl_table_add_addrs_list, pfctl_append_rdr_rule_generic, pfctl_table_del_addrs, pfctl_table_del_addr_list
+from app2.zfs import clone_dataset, get_dataset, delete_dataset
+from app2.pf.pf import pfctl_table_add_addrs_list, pfctl_append_rdr_rule_generic, pfctl_table_del_addrs, pfctl_table_del_addr_list, pfctl_remove_rdr_port_rule
 import uuid
 
 CONTAINER_ROOT = 'zroot/jails/containers'
@@ -26,6 +26,7 @@ CONF_ROOT = './conf'
 VOLUME_MOUNT_ROOT = '/jails/volumes'
 CONTAINER_MOUNT_ROOT = '/jails/containers' 
 
+LOAD_MODULES = ['if_epair', 'if_bridge']
 
 class STATE(Enum):
     CREATED = 0
@@ -76,6 +77,21 @@ class JailManager:
         self.cursor.execute('update containers set status=? where name =?', ('exited', name,))        
         self.conn.commit()
         return 'exited'
+    
+    def load_modules(self):
+        print('Loading Modules ...')
+        for module in LOAD_MODULES:
+            try:
+                id = kldload(module)
+                print(f'Module {module} loaded succesfullly with id: {id}')
+            except Exception as e:
+                print('Failed to load module', module, '\nError:', e)
+    
+    def set_sysctls(self):
+        print('Enable IP forwarding ...')
+        sysctl_set_int("net.inet.ip.forwarding", 1)
+        # sysctl_set_int("net.pf.filter_local", 1)
+        print('IP forwarding Enabled...')
 
     def get_status_alpha(self, status):
         if status>=100:
@@ -105,14 +121,14 @@ class JailManager:
 
         self.cursor.execute('update containers set status=? where ID=?', ("running", res[0],))
         self.conn.commit()
-        addresses = self.cursor.execute('select ip_address from container_networks where container_id = ?', (res[0],)).fetchall()
-        if addresses:
-            addresses = [addr[0] for addr in addresses if addr]
-            if addresses:
-                try:
-                    pfctl_table_add_addrs_list("cni-nat", addresses, 0)
-                except OSError as e:
-                    print(f'Failed to add {addresses} to table')
+        # addresses = self.cursor.execute('select ip_address from container_networks where container_id = ?', (res[0],)).fetchall()
+        # if addresses:
+        #     addresses = [addr[0] for addr in addresses if addr]
+        #     if addresses:
+        #         try:
+        #             pfctl_table_add_addrs_list("cni-nat", addresses, 0)
+        #         except OSError as e:
+        #             print(f'Failed to add {addresses} to table')
         return "started"
 
     def exists(self, name):
@@ -129,6 +145,13 @@ class JailManager:
 
     def get_networks(self):
         rows = self.cursor.execute('select ID, name, driver from networks').fetchall()
+        if not rows:
+            return []
+        columns = [col[0] for col in self.cursor.description]
+        return [dict(zip(columns, row)) for row in rows]
+    
+    def get_volumes(self):
+        rows = self.cursor.execute('select ID, name, driver, created_at from volumes').fetchall()
         if not rows:
             return []
         columns = [col[0] for col in self.cursor.description]
@@ -170,7 +193,7 @@ class JailManager:
 
 
     def stop_jail(self, name):
-        res = self.cursor.execute('select ID, status from containers where name=?', (name,)).fetchone()
+        res = self.cursor.execute('select ID, status, config_json from containers where name=?', (name,)).fetchone()
         if not res:
             return 'DOESNOTEXIST' 
         if res[1] != "started" and res[1] != "running":
@@ -213,17 +236,34 @@ class JailManager:
         try:
             if not removed:
                 print("Calling jail_remove")
-                res = remove_jail_from_name(name)
+                result = remove_jail_from_name(name)
         except JailDoesNotExist as e:
             print(e)
-        addresses = self.cursor.execute('select ip_address from container_networks where container_id = ?', (res[0],)).fetchall()
-        if addresses:
-            addresses = [addr[0] for addr in addresses if addr]
-            if addresses:
-                try:
-                    pfctl_table_del_addr_list("cni-nat", addresses, 0)
-                except OSError as e:
-                    print(f'Failed to remove {addresses} to table')
+        # addresses = self.cursor.execute('select ip_address from container_networks where container_id = ?', (res[0],)).fetchall()
+        # if addresses:
+        #     addresses = [addr[0] for addr in addresses if addr]
+        #     if addresses:
+        #         try:
+        #             pfctl_table_del_addr_list("cni-nat", addresses, 0)
+        #         except OSError as e:
+        #             print(f'Failed to remove {addresses} to table')
+        ports = json.loads(res[2]).get('ports', [])
+        network_rows = self.cursor.execute('''
+            SELECT n.name
+            FROM networks n
+                JOIN container_networks cn
+                ON n.id = cn.network_id
+            WHERE cn.container_id = ?
+        ''', (res[0],)).fetchall()
+        networks = [net[0] for net in network_rows if net]
+        try:
+            for port in ports:
+                proto = socket.IPPROTO_UDP if port.get('proto')=='udp' else socket.IPPROTO_TCP
+                for net in networks:
+                    pfctl_remove_rdr_port_rule(f'cni-rdr/{net}', port['host'], proto)
+        except Exception as e:
+            print(e)
+            
         return "exited"
 
     
@@ -289,11 +329,19 @@ class JailManager:
         if (check_interface_exist(name)):
             return str(ip_interface.ip), None
         
-            
+        # try:
+        #     print(f'Adding Address {network.get("subnet")+"/"+str(prefix)} to table')
+        #     # pfctl_table_add_addrs_list('cni-nat', [network.get('subnet')+'/'+str(prefix)], 0)
+        # except Exception as e:
+        #     print('Failed to start network') 
+        #     print(e)
+        #     return "", f"Failed to start network: {name}"           
         try:
             if_name = create_interface("bridge")
+            print('Renaming bridge to', name)
             rename_interface(if_name, name)    
             set_interface_group(name, "jailnet")
+            print("Setting IP Address for ", name)
             set_ip_address(name, str(ip_interface.ip), str(ip_interface.network.netmask), broadcast_addr=None)
             print(f"src: {network.get('subnet')}/{prefix}\n Dst: {str(ip_interface.ip)}\n")
             pfctl_append_rdr_rule_generic(
@@ -304,7 +352,8 @@ class JailManager:
                 ['127.0.0.11/32'], 
                 53, 
                 dst_port=53, 
-                af=socket.IPPROTO_UDP
+                af=socket.IPPROTO_UDP,
+                quick=1
             )
             
         except OSError as e:
@@ -434,7 +483,7 @@ class JailManager:
     def create_anamous_volumes(self, mounts):
         
         for mount in mounts:
-            if mount['source'] != 'volume':
+            if mount['type'] != 'volume':
                 continue
             
             try:
@@ -450,7 +499,7 @@ class JailManager:
 
             self.cursor.execute("""
                 INSERT OR IGNORE INTO volumes (name, driver, path)
-                VALUES (?, 'nullfs', ?)
+                VALUES (?, 'local', ?)
             """, (volume_name, volume_path))
 
             created_volumes.append((volume_name, volume_path))
@@ -485,7 +534,7 @@ class JailManager:
         final_mounts = self.handle_container_mounts(image_json.get('volumes'), data.get('mounts'))
         self.create_anamous_volumes(final_mounts)
         container['mounts'] = final_mounts    
-
+        container['ports'] = data.get('ports', [])
         return container
 
     def get_free_ip_for_network(self, network_id):
@@ -517,6 +566,19 @@ class JailManager:
         if res:
             return -1, 'Error creating dataset'
         return 0, None
+    
+    def link_container_volumes(self, mounts, cid):
+        for mount in mounts:
+            if mount['type'] != 'volume':
+                continue
+            source = mount['source']
+            os.makedirs(os.path.join(VOLUME_MOUNT_ROOT, source), exist_ok=True)
+            self.cursor.execute('INSERT OR IGNORE INTO volumes (name, driver, path) values (?, ?, ?)', (source, 'local', source))
+            row = self.cursor.execute('SELECT id from volumes where name=?', (source,)).fetchone()
+            print(row)
+            self.cursor.execute('INSERT into volume_containers (volume_id, container_id) values (?, ?)', (row[0], cid,))
+
+        
 
     def create_container(self, **data):
         name = data.get('name')
@@ -526,7 +588,8 @@ class JailManager:
         env = data.get('env', {})
         command = data.get('command', [])
         entrypoint = data.get('entrypoint', [])
-        user = data.get('user')
+        ports = data.get('ports', [])
+        user = data.get('user', None)
         if not name:
             return -1, f'Name cannot be empty'
         image_name, tag = image.split(':')
@@ -548,16 +611,21 @@ class JailManager:
             command=command, 
             entrypoint=entrypoint, 
             user=user, 
-            workingDir=data.get('working_dir'),
+            workingDir=data.get('workingDir'),
             networks=networks, 
-            mounts=mounts
+            mounts=mounts,
+            ports=ports
         )
-        cid = self.insert_container(name, imgId, cont_json)
-        result, msg = self.create_dataset(image, name, snapshot_name='base')
-        if result:
-            self.conn.rollback()
-            print('Changes rolled back')
-            return -1, 'Failed to create container'
+        cont_json['restart'] = data.get('restart', 'no')
+        cont_json['rm']      = data.get('rm', False)
+        project = data.get('project', 'default')
+        service = data.get('service', 'default')
+        cid = self.insert_container(name, imgId, cont_json, project, service)
+        # result, msg = self.create_dataset(image, name, snapshot_name='base')
+        # if result:
+        #     self.conn.rollback()
+        #     print('Changes rolled back')
+        #     return -1, 'Failed to create container'
 
         if 'networks' in res and res['networks']:
             rows = []
@@ -567,12 +635,18 @@ class JailManager:
                 rows.append((network_id, cid, str(addr),))
             query = "INSERT INTO container_networks (network_id, container_id, ip_address) values (?, ?, ?)"
             self.cursor.executemany(query, rows)
-        
+        self.link_container_volumes(cont_json['mounts'], cid)
+        result, msg = self.create_dataset(image, name, snapshot_name='base')
+        if result:
+            self.conn.rollback()
+            print('Changes rolled back', msg)
+            return -1, 'Failed to create container'
+
         self.conn.commit()        
         return 0, {'id': cid}
         
-    def insert_container(self, name, imag_id, config_json):
-        self.cursor.execute('INSERT INTO containers (name, image_id, config_json) values (?, ?, ?)', (name, imag_id, json.dumps(config_json,)))
+    def insert_container(self, name, imag_id, config_json, project, service):
+        self.cursor.execute('INSERT INTO containers (name, image_id, config_json, project, service) values (?, ?, ?)', (name, imag_id, json.dumps(config_json,), project, service))
         inserted_id = self.cursor.lastrowid
         print("Inserted ID:", inserted_id)
         # Commit and close connection
@@ -604,13 +678,95 @@ class JailManager:
                 rdr, 
                 container, 
                 dst_port=host, 
-                af=proto 
+                af=proto,
+                quick=1 
             )
             
         return 0, ''
+
         
 
     def list_images(self):
         rows = self.cursor.execute("SELECT ID, name, tag, created_at from images").fetchall()
         columns = [col[0] for col in self.cursor.description ]
         return [dict(zip(columns, row)) for row in rows ]        
+
+    def create_volume(self, name):
+        row = self.cursor.execute('SELECT ID from volumes where name=?', (name,)).fetchone()
+        if row:
+            return None, 'Volume already exist'
+        try:
+            self.cursor.execute("INSERT INTO volumes(name, driver, path) VALUES (?, 'nullfs', ?)", (name, os.path.join(VOLUME_MOUNT_ROOT, name)))
+            os.makedirs(os.path.join(VOLUME_MOUNT_ROOT, name), exist_ok=True)
+            self.conn.commit()
+            row = self.cursor.execute('SELECT ID, name from volumes where name=?', (name,)).fetchone()
+            return {"ID":row[0], "name":row[1]}, None
+        except sqlite3.IntegrityError as e:
+            print(e)
+            return None, f"Failed to create volumes: {e}"
+        except Exception as e:
+            print(e)
+            return None, f"Failed to create volumes: {e}"
+        return None, 'Error'
+
+    def remove_container(self, name):
+        cont = self.cursor.execute('select ID, status from containers where name=?', (name,)).fetchone()
+        if not cont:
+            return f"Container {name} not found"
+        if cont[1]=='running' and jail_get_id(name) != -1:
+            return "Container is running. Stop and retry"
+        res, err = delete_dataset(os.path.join(CONTAINER_ROOT, name))
+        if res< 0:
+            return err        
+        try:
+            print(name,':Unlink Volumes ...')
+            self.cursor.execute('delete from volume_containers where container_id=?', (cont[0],))
+            print(name,':Unlink networks ...')
+            self.cursor.execute('delete from container_networks where container_id=?', (cont[0],))
+            print(name,':Remove container ...')
+            self.cursor.execute('delete from containers where id=?', (cont[0],))
+            self.conn.commit()
+        except Exception as e:
+            print('Failed to remove container\nRolling back ...', e)
+            self.conn.rollback()
+        return None
+
+    
+    def attach_network(self, container_name, network_name):
+        cont = self.cursor.execute('select ID, config_json from containers where name=?', (container_name,)).fetchone()
+        if not cont:
+            return 'No such Container'
+        network = self.cursor.execute('select ID, subnet, prefix from networks where name=?', (network_name,)).fetchone()
+        if not network:
+            return 'No Such Network'
+        
+        is_present = self.cursor.execute('''
+                    select id, ip_address from container_networks 
+                    where container_id=? and network_id=?
+                    ''', (cont[0], network[0],)).fetchone()
+        if is_present:
+            return 'Network Already Present'
+        allocated_ip = self.get_free_ip_for_network(network[0])
+        if not allocated_ip:
+            self.conn.rollback()
+            return 'Failed to get free IP Address' 
+        try:
+            self.cursor.execute(
+                "INSERT INTO container_networks (network_id, container_id, ip_address) values (?, ?, ?)",
+                (network[0], cont[0], str(allocated_ip))
+            )
+            self.conn.commit() 
+        except Exception as e:
+            self.conn.rollback()
+            print('Failed to attach network:', e)
+            return 'Failed to attach network'
+        return None
+
+    def get_image(self, img_name):
+        name, tag = img_name.split(':')
+        res = self.cursor.execute('SELECT * from images where name=? and tag=?', (name,tag,)).fetchone()
+        if not res:
+            return None, 'No such Image'
+        
+        columns = [col[0] for col in self.cursor.description]
+        return dict(zip(columns, res)), None

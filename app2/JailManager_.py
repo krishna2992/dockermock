@@ -618,7 +618,9 @@ class JailManager:
         )
         cont_json['restart'] = data.get('restart', 'no')
         cont_json['rm']      = data.get('rm', False)
-        cid = self.insert_container(name, imgId, cont_json)
+        project = data.get('project', 'default')
+        service = data.get('service', 'default')
+        cid = self.insert_container(name, imgId, cont_json, project, service)
         # result, msg = self.create_dataset(image, name, snapshot_name='base')
         # if result:
         #     self.conn.rollback()
@@ -643,8 +645,8 @@ class JailManager:
         self.conn.commit()        
         return 0, {'id': cid}
         
-    def insert_container(self, name, imag_id, config_json):
-        self.cursor.execute('INSERT INTO containers (name, image_id, config_json) values (?, ?, ?)', (name, imag_id, json.dumps(config_json,)))
+    def insert_container(self, name, imag_id, config_json, project, service):
+        self.cursor.execute('INSERT INTO containers (name, image_id, config_json, project, service) values (?, ?, ?)', (name, imag_id, json.dumps(config_json,), project, service))
         inserted_id = self.cursor.lastrowid
         print("Inserted ID:", inserted_id)
         # Commit and close connection

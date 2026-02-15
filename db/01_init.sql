@@ -50,15 +50,20 @@ CREATE INDEX idx_image_versions_tag ON image_versions(tag);
 -- Container Database Schema
 -- ========================================
 
-CREATE TABLE Containers (
+CREATE TABLE containers (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
-    name TEXT NOT NULL UNIQUE, 
-    path VARCHAR(100),
-    IVD INTEGER NOT NULL, 
-    type INTEGER, 
-    status INTEGER, 
-    conf_file not null,
-    FOREIGN KEY (IVD) REFERENCES Image_versions(id) ON DELETE CASCADE
+    name TEXT UNIQUE NOT NULL,                        -- Container name (hostname)
+    image_id INTEGER REFERENCES images(id) ON DELETE SET NULL,
+    status TEXT CHECK (status IN ('created', 'running', 'stopped', 'paused', 'exited')) 
+           DEFAULT 'created',
+    pid INTEGER DEFAULT -1,                                      -- PID of running process (if applicable)
+    config_json TEXT,                                 -- Full OCI config JSON blob
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    started_at TIMESTAMP,
+    exited_at TIMESTAMP,
+    exit_code INTEGER, 
+    project TEXT, 
+    service TEXT
 );
 
 
