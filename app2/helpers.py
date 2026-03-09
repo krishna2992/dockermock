@@ -1,4 +1,5 @@
 import json, sys
+import re
 import subprocess
 from pathlib import Path
 from .lib import *
@@ -288,3 +289,70 @@ def sysctl_set_int(name: str, value: int):
     if ret != 0:
         err = ctypes.get_errno()
         raise OSError(err, f"sysctl {name} failed: {os.strerror(err)}")
+    
+def convert_to_bytes(value):
+    if isinstance(value, int):
+        return value
+
+    value = value.strip().upper()
+
+    match = re.match(r"(\d+)([KMG]?B?)", value)
+    if not match:
+        return value
+
+    num = int(match.group(1))
+    unit = match.group(2)
+
+    multipliers = {
+        "K": 1024,
+        "KB": 1024,
+        "M": 1024**2,
+        "MB": 1024**2,
+        "G": 1024**3,
+        "GB": 1024**3,
+        "": 1
+    }
+
+    return num * multipliers.get(unit, 1)
+
+
+def convert_to_rctl_rules(data, subject):
+    if not data:
+        return []
+    
+    resource_map = {
+        "MEMORY": "memoryuse",
+        "CPU_PERCENT": "pcpu",
+        "PROCESS_COUNT": "maxproc",
+        "OPEN_FILES": "openfiles",
+        "SWAP": "swapuse",
+        "CPU_TIME": "cputime"
+    }
+
+    action_map = {
+        "BLOCK": "deny",
+        "LOG": "log"
+    }
+
+    rules = []
+
+    for limit in data:
+        resource = limit["RESOURCE"]
+        value = limit["MAX"]
+        action = limit["ACTION"]
+
+        rctl_resource = resource_map.get(resource)
+        rctl_action = action_map.get(action)
+
+        if not rctl_resource or not rctl_action:
+            continue
+
+        # convert memory-style values to bytes
+        if isinstance(value, str):
+            value = convert_to_bytes(value)
+
+        rule = f"{subject}:{rctl_resource}:{rctl_action}={value}"
+        rules.append(rule)
+
+    return rules
+

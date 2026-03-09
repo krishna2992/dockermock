@@ -3,6 +3,7 @@ from ctypes.util import find_library
 from time import sleep
 from .helpers import *
 from .route import add_route
+from .rctl import *
 from pathlib import Path
 import subprocess
 import ctypes
@@ -103,6 +104,8 @@ class Jail:
         self.handle_fs_mounts()
         # Handle User Defined Mounts
         self.handle_mounts()
+        # Apply limits to jail before going to jail
+        self.apply_limits()
 
 
     def create_epair_up(self, network):
@@ -284,7 +287,6 @@ class Jail:
         '''
         res = subprocess.run(['/bin/sh', '/etc/rc'])
         self.setup_network()
-        
         print("Setup Complete")
 
     def stop_jail(self):
@@ -320,6 +322,10 @@ class Jail:
             self.destroy_epair()
             self.handle_fs_umounts()
             self.handle_unmount()
+            try:
+                rctl_remove_rule(f"jail:{self.name}")
+            except Exception as e:
+                print(e)
         except Exception as e:
             print(e)
 
@@ -370,3 +376,18 @@ class Jail:
         except Exception as e:
             traceback.print_exc()
             sys.exit(1)
+
+    def apply_limits(self):
+        if not 'R_LIMITS' in self.kwargs:
+            return 
+        
+        rules= convert_to_rctl_rules(self.kwargs.get('R_LIMITS'), f'name:{self.name}')
+        for rule in rules:
+            print('Adding rule :', rule)
+            try:
+                rctl_add_rule(rule=rule)
+            except Exception as e:
+                print(e)
+        
+        return 
+
