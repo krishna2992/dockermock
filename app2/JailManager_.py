@@ -2,10 +2,8 @@ import subprocess
 import json
 import os
 import sys
-import enum
 import signal
 import sqlite3
-import subprocess
 import ipaddress
 from time import sleep
 from enum import Enum
@@ -72,6 +70,10 @@ class JailManager:
         self.cursor = self.conn.cursor()
         self.status = ['CREATED', 'STARTED', 'RUNNING', 'STOPPED', 'EXITED', 'FAILED', 'STOPPING']
         self.subnetallocator = SubnetAllocator()
+        self.worker = None
+
+    def set_worker(self, worker):
+        self.worker = worker
     
     def update_exit_code(self, name, exit_code):
         self.cursor.execute('update containers set status=? where name =?', ('exited', name,))        
@@ -108,28 +110,13 @@ class JailManager:
         if res[1] == "started" or res[1] == "running":
             print('JAIL ALREADY: ', res[1])
             return res[1]
-        
-        
-        pid = rfork_wrapper(RFPROC|RFNOWAIT|RFCFDG)
-        if pid==0:
-            os.execv(sys.executable, ['python', 'parent.py', name])
-        print('pid:', pid)
-        if pid<0:
-            self.cursor.execute('update containers set status=? where ID=?', ("exited", res[0],))        
-            self.conn.commit()
-            return "FAILED: Failed to start parent"
-
+        # In case of error like worker closed exited
+        # Exception will cause to stop server and auto
+        # clean
+        self.worker.send(name)
         self.cursor.execute('update containers set status=? where ID=?', ("running", res[0],))
         self.conn.commit()
-        # addresses = self.cursor.execute('select ip_address from container_networks where container_id = ?', (res[0],)).fetchall()
-        # if addresses:
-        #     addresses = [addr[0] for addr in addresses if addr]
-        #     if addresses:
-        #         try:
-        #             pfctl_table_add_addrs_list("cni-nat", addresses, 0)
-        #         except OSError as e:
-        #             print(f'Failed to add {addresses} to table')
-        return "started"
+        return "running"
 
     def exists(self, name):
         res = self.cursor.execute('select ID from containers where name=?', (name, )).fetchone()
@@ -646,7 +633,7 @@ class JailManager:
         return 0, {'id': cid}
         
     def insert_container(self, name, imag_id, config_json, project, service):
-        self.cursor.execute('INSERT INTO containers (name, image_id, config_json, project, service) values (?, ?, ?)', (name, imag_id, json.dumps(config_json,), project, service))
+        self.cursor.execute('INSERT INTO containers (name, image_id, config_json, project, service) values (?, ?, ?, ?, ?)', (name, imag_id, json.dumps(config_json,), project, service))
         inserted_id = self.cursor.lastrowid
         print("Inserted ID:", inserted_id)
         # Commit and close connection

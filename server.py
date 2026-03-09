@@ -1,8 +1,13 @@
+import os
+import signal
+import socket
+import traceback
 from flask import Flask, jsonify, request, abort
 from threading import Lock
 from app2.lib import set_ip_address
 from app2.JailManager_ import JailManager, STATE, NET_TYPE
 from app2.dns import SubnetTrie, DnsTree, run_dns
+import kqueue_parent 
 
 import atexit
 app = Flask(__name__)
@@ -12,8 +17,43 @@ app.config['JSONIFY_PRETTYPRINT_REGULAR'] = True  # enable indent
 
 manager = JailManager()
 
+parent_sock, child_sock = socket.socketpair()
+child_pid = None
 
+
+def handle_sigterm(signum, frame):
+    print("SIGTERM received. Shutting down gracefully...")
+    raise KeyboardInterrupt
+
+signal.signal(signal.SIGTERM, handle_sigterm)
+signal.signal(signal.SIGINT, handle_sigterm)
 lock = Lock()
+
+
+def shutdown():
+    print("Signaling Child Process to Exit")
+    print('Closing Parent socket')
+    parent_sock.close()
+    global child_pid
+    if child_pid:
+        print(f'Waiting on child {child_pid}')
+        try:
+            _, status = os.waitpid(child_pid, 0)
+            exit_code = os.WEXITSTATUS(status)
+            print(f"[Server] KqueueParent exited with code {exit_code}")
+        except Exception as e:
+            print(f'Failed to wait on kqueue_parent')
+            traceback.print_exception(type(e), e, e.__traceback__)
+
+    
+
+
+def handle_close():
+    shutdown()
+    print('Closing Manager')
+    manager.close()
+    print('Exiting')
+
 
 def create_lo0_addr():
     print('Setting Up DNS Server...')
@@ -158,9 +198,7 @@ def create_container():
         return jsonify(container), 201
 
 
-def handle_close():
-    print('Closing Manager')
-    manager.close()
+
 
 @app.route(f"/api/ports", methods=['POST'])
 def add_ports():
@@ -218,5 +256,17 @@ if __name__ == '__main__':
     manager.load_modules()
     manager.set_sysctls()
     run_dns("127.0.0.11", subnetTrie, dnsTree)
-    app.run(debug=False, port=5000)
+
+    child_pid = os.fork()
+
+    if child_pid == 0:
+        parent_sock.close()
+        kqueue_parent.run(child_sock.fileno())
+        print('Child Failed ..................................')
+        os._exit(0)
+
+    else:
+        child_sock.close()
+        manager.set_worker(parent_sock)
+        app.run(debug=False, port=5000)
     
