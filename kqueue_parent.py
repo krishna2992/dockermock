@@ -3,12 +3,10 @@ import ctypes
 import traceback
 from app2.Jail_ import Jail 
 from app2.wrappers import rfork_wrapper, RFPROC, RFCFDG
-from app2.JailManager_ import 
 import socket
 import select
 import signal
 import json
-import requests as r
 import requests as r
 from datetime import datetime 
 import os
@@ -148,6 +146,7 @@ def start_container(ID, name, jail_json) -> int:
     if pid == 0:
         try:
             # redirect_io(stdout_path='/tmp/parent.log')
+            os.setsid()
             redirect_standard_fds('parent.log')
             signal.signal(signal.SIGTERM, signal.SIG_DFL)
             signal.signal(signal.SIGINT, signal.SIG_DFL)
@@ -244,7 +243,7 @@ def track_process(kq, process_pid):
         traceback.print_exception(type(e), e, e.__traceback__)
 
 
-def remove_container(process_pid):
+def remove_container(process_pid, notify=True):
     try:
         global JAIL_DICT
         jail = JAIL_DICT.get(process_pid)
@@ -255,12 +254,37 @@ def remove_container(process_pid):
         print(f"[Parent] Child exited with code {exit_code}")
         print(f"[Parent] Destroying jail with JID: {jail.jid}")
         jail.destroy_jail()
-        notity_status(jail.name, exit_code, f'Exited on: {datetime.now().isoformat()}')   
+        JAIL_DICT.pop(process_pid)
+        print('Notify:', notify)
+        if notify==True:
+            notity_status(jail.name, exit_code, f'Exited on: {datetime.now().isoformat()}')   
         print(f'Container Stopped Succesfully') 
     except Exception as e:
         print(f'Failed to remove {process_pid} jail')
         traceback.print_exception(type(e), e, e.__traceback__)
+
+
+def clean_all_jails(kq):
+    global JAIL_DICT
+
+    for pid in JAIL_DICT.keys():
+        try:
+            os.kill(pid, signal.SIGTERM)
+        except ProcessLookupError:
+            pass
     
+    while len(JAIL_DICT.keys()):
+        events = kq.control(None, 1)
+
+        for ev in events:
+            if ev.filter == select.KQ_FILTER_PROC:
+                if ev.fflags & select.KQ_NOTE_EXIT:
+                    print(f"Process {ev.ident} exited during shutdown")
+                    remove_container(ev.ident, notify=False)
+
+    print("All containers cleaned up")
+    return
+
 
 def run(sock_fd):
     signal.signal(signal.SIGINT, signal.SIG_IGN)
@@ -298,6 +322,7 @@ def run(sock_fd):
 
                 if not data:
                     print("Parent closed socket")
+                    clean_all_jails(kq)
                     return
 
                 buffer += data

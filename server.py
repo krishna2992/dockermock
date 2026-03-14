@@ -30,10 +30,26 @@ signal.signal(signal.SIGINT, handle_sigterm)
 lock = Lock()
 
 
+def mark_all_exited():
+    try:
+        # rows = manager.cursor.execute("select name from containers where status='running'").fetchall()
+        # for row in rows:
+        #     try:
+        #         status = manager.stop_jail(row[0])
+        #     except Exception  as e:
+        #         print(e)
+
+        manager.cursor.execute("update containers set status='exited' where status='running'")
+    except Exception as e:
+        print('Failed to mark all jails completed')
+        print(e)
+
+
 def shutdown():
     print("Signaling Child Process to Exit")
     print('Closing Parent socket')
     parent_sock.close()
+    mark_all_exited()
     global child_pid
     if child_pid:
         print(f'Waiting on child {child_pid}')
@@ -262,7 +278,7 @@ if __name__ == '__main__':
     if child_pid == 0:
         parent_sock.close()
         kqueue_parent.run(child_sock.fileno())
-        print('Child Failed ..................................')
+        print('Child Completed')
         os._exit(0)
 
     else:
