@@ -43,27 +43,13 @@ int ruleset_exists(int dev, char* anchor, int action )
 */
 int clear_ruleset(int dev, char* anchor)
 {
-    struct pfioc_trans pt = {0};
-    struct pfioc_trans_e pte = {0};
-    pt.size = 1;
-    pt.esize = sizeof(pte);
-    pt.array = &pte;
-
-    pte.rs_num = PF_RULESET_RDR;
-    strlcpy(pte.anchor, anchor, sizeof(pte.anchor));
-    
-    if (ioctl(dev, DIOCXBEGIN, &pt) < 0) {
-        perror("DIOCXBEGIN");
-        return 1;
-    }
-
-
-    if (ioctl(dev, DIOCXCOMMIT, &pt) < 0) 
-    {
-        perror("DIOCXCOMMIT");
-        return 1;
-    }
-    return 0;
+    printf("Clearing nat ruleset\n");
+    clear_nat_ruleset();
+    printf("Clearing rdr ruleset\n");
+    clear_rdr_ruleset();
+    printf("Clearing pass ruleset\n");
+    clear_pass_ruleset();
+    printf("Ruleset %s cleared succesfully\n");
 }
 
 int clear_nat_ruleset(int dev, char* anchor)
@@ -91,6 +77,55 @@ int clear_nat_ruleset(int dev, char* anchor)
     return 0;
 }
 
+int clear_rdr_ruleset(int dev, char* anchor)
+{
+    struct pfioc_trans pt = {0};
+    struct pfioc_trans_e pte = {0};
+    pt.size = 1;
+    pt.esize = sizeof(pte);
+    pt.array = &pte;
+
+    pte.rs_num = PF_RULESET_RDR;
+    strlcpy(pte.anchor, anchor, sizeof(pte.anchor));
+    
+    if (ioctl(dev, DIOCXBEGIN, &pt) < 0) {
+        perror("DIOCXBEGIN");
+        return 1;
+    }
+
+
+    if (ioctl(dev, DIOCXCOMMIT, &pt) < 0) 
+    {
+        perror("DIOCXCOMMIT");
+        return 1;
+    }
+    return 0;
+}
+
+int clear_pass_ruleset(int dev, char* anchor)
+{
+    struct pfioc_trans pt = {0};
+    struct pfioc_trans_e pte = {0};
+    pt.size = 1;
+    pt.esize = sizeof(pte);
+    pt.array = &pte;
+
+    pte.rs_num = PF_RULESET_PASS;
+    strlcpy(pte.anchor, anchor, sizeof(pte.anchor));
+    
+    if (ioctl(dev, DIOCXBEGIN, &pt) < 0) {
+        perror("DIOCXBEGIN");
+        return 1;
+    }
+
+
+    if (ioctl(dev, DIOCXCOMMIT, &pt) < 0) 
+    {
+        perror("DIOCXCOMMIT");
+        return 1;
+    }
+    return 0;
+}
 
 /*
 * convert cidr int to 32 bit mask
