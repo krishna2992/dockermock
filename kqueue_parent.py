@@ -195,6 +195,9 @@ def transform_json(data):
     # Jail Devfs Ruleset
     jail['devfs_ruleset'] = 4
 
+    # Default Secure level
+    jail['securelevel'] = 2
+
     # Jail Networking stack
     if 'networks' in data and data['networks'] and data['networks'][0]['driver'] == 'host':
         # Host Jail

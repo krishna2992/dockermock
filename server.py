@@ -40,6 +40,7 @@ def mark_all_exited():
         #         print(e)
 
         manager.cursor.execute("update containers set status='exited' where status='running'")
+        manager.conn.commit()
     except Exception as e:
         print('Failed to mark all jails completed')
         print(e)

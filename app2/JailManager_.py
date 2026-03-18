@@ -5,6 +5,8 @@ import sys
 import signal
 import sqlite3
 import ipaddress
+import traceback
+import uuid
 from time import sleep
 from enum import Enum
 from .Jail_ import Jail, get_jail_id_by_name
@@ -14,8 +16,14 @@ import ctypes
 from app2.dns import SubnetTrie, DnsTree
 from app2.network import *
 from app2.zfs import clone_dataset, get_dataset, delete_dataset
-from app2.pf.pf import pfctl_table_add_addrs_list, pfctl_append_rdr_rule_generic, pfctl_table_del_addrs, pfctl_table_del_addr_list, pfctl_remove_rdr_port_rule
-import uuid
+from app2.pf.pf import (
+    pfctl_table_add_addrs_list, 
+    pfctl_append_rdr_rule_generic, 
+    pfctl_table_del_addrs, 
+    pfctl_table_del_addr_list, 
+    pfctl_remove_rdr_port_rule, 
+    pfctl_clear_ruleset
+)
 
 CONTAINER_ROOT = 'zroot/jails/containers'
 IMAGE_ROOT = 'zroot/jails/images'
@@ -113,7 +121,7 @@ class JailManager:
         # In case of error like worker closed exited
         # Exception will cause to stop server and auto
         # clean
-        self.worker.send(name)
+        self.worker.send((name+'\n').encode())
         self.cursor.execute('update containers set status=? where ID=?', ("running", res[0],))
         self.conn.commit()
         return "running"
@@ -314,6 +322,20 @@ class JailManager:
         ip_net = ipaddress.ip_network(network.get('subnet')+'/'+str(prefix))
         ip_interface = ipaddress.ip_interface(f'{next(ip_net.hosts()).compressed}/{prefix}')
         if (check_interface_exist(name)):
+            try:
+                pfctl_append_rdr_rule_generic(
+                name, 
+                f'cni-rdr/{name}', 
+                f"{network.get('subnet')}/{prefix}", 
+                str(ip_interface.ip), 
+                ['127.0.0.11/32'], 
+                53, 
+                dst_port=53, 
+                af=socket.IPPROTO_UDP,
+                quick=1
+                )
+            except Exception as e:
+                traceback.print_exception(e)
             return str(ip_interface.ip), None
         
         # try:
@@ -340,7 +362,7 @@ class JailManager:
                 53, 
                 dst_port=53, 
                 af=socket.IPPROTO_UDP,
-                quick=1
+                quick=0
             )
             
         except OSError as e:
@@ -639,7 +661,21 @@ class JailManager:
         # Commit and close connection
         return inserted_id
     
+    def clear_ruleset_before_close(self):
+        try:
+            rows = self.cursor.execute('select name from networks').fetchall()
+            for row in rows:
+                try:
+                    pfctl_clear_ruleset(f'cni-rdr/{row[0]}')
+                except Exception as e:
+                    print(f'Failed to clear ruleset cni-rdr/{row[0]}')
+                    traceback.print_exception(e)        
+        except Exception as e:
+            traceback.print_exception(e)
+        
+    
     def close(self):
+        self.clear_ruleset_before_close()
         self.cursor.close()
         self.conn.close()
 

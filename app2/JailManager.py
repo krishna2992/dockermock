@@ -353,7 +353,7 @@ class JailManager:
                 53, 
                 dst_port=53, 
                 af=socket.IPPROTO_UDP,
-                quick=1
+                quick=0
             )
             
         except OSError as e:
