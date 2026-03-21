@@ -236,7 +236,6 @@ def list_volumes():
 @app.route(f"/api/volumes", methods=['POST'])
 def create_volume():
     data = request.get_json()
-    print(data)
     if 'name' not in data:
         return {"error":"Volume Name is required"}, 400    
     with lock:
