@@ -141,6 +141,9 @@ class MiniImageBuilder:
 
         self.save_metadata()
 
+    def _clean_cache(self):
+        pass
+
     def parse_dockerfile(self, path):
         step = 0
         try:

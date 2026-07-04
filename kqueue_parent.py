@@ -2,7 +2,8 @@ import sys, json
 import ctypes
 import traceback
 from app2.Jail_ import Jail 
-from app2.wrappers import rfork_wrapper, RFPROC, RFCFDG
+from app2.wrappers import rfork_wrapper
+from app2.JailManager_ import RFPROC, RFCFDG
 import socket
 import select
 import signal

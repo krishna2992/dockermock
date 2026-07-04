@@ -6,6 +6,7 @@
 #include <string.h>
 #include <sys/cdefs.h>
 #include <sys/ioccom.h>
+#include <sys/nv_namespace.h>
 #include <sys/param.h>
 #include <sys/socket.h>
 #include <unistd.h>
@@ -14,6 +15,8 @@
 #include <sys/ioctl.h>
 #include <net/pfvar.h>
 #include <netpfil/pf/pf.h>
+#include <errno.h>
+#include <assert.h>
 
 #define NATPASS     1
 #define ALLTABLE    -1
@@ -22,6 +25,175 @@ typedef struct filter_addr_t{
     uint8_t type;
     char addr[MAXPATHLEN];
 } filter_addr;
+
+
+#if __FreeBSD_version >= 1500000
+void nvaddr_to_pfrule_addr(const nvlist_t* nvl, struct pf_rule_addr* addr)
+{
+	size_t len;
+	const void *data;
+	const uint64_t* ports;	
+	size_t port_count = 0;
+	const nvlist_t *addr_wrap, *addr_wrap_addr, *addr_wrap_mask;
+
+	addr->neg = (u_int8_t)nvlist_get_number(nvl, "neg");
+	addr->port_op = (u_int8_t)nvlist_get_number(nvl, "port_op");
+	ports = nvlist_get_number_array(nvl, "port", &port_count);
+	addr->port[0] = (u_int16_t)ports[0];
+	addr->port[1] = (u_int16_t)ports[0];
+	
+	/* 
+	Handle Address Part
+	*/
+	addr_wrap = nvlist_get_nvlist(nvl, "addr");
+	addr_wrap_addr = nvlist_get_nvlist(addr_wrap, "addr");
+	addr_wrap_mask = nvlist_get_nvlist(addr_wrap, "mask");
+	addr->addr.type = (u_int8_t)nvlist_get_number(addr_wrap, "type");
+	addr->addr.iflags = (u_int8_t)nvlist_get_number(addr_wrap, "iflags");
+
+	if(addr->addr.type == PF_ADDR_ADDRMASK){
+		data = nvlist_get_binary(addr_wrap_addr, "addr", &len);
+		assert(len == sizeof(struct pf_addr));
+		memcpy(&addr->addr.v.a.addr, data, len);
+		len = 0;
+		data = nvlist_get_binary(addr_wrap_mask, "addr", &len);
+		assert(len == sizeof(struct pf_addr));
+		memcpy(&addr->addr.v.a.mask, data, len);
+		
+	}else if (addr->addr.type == PF_ADDR_TABLE) {
+		data = nvlist_get_binary(addr_wrap_addr, "addr", &len);
+		assert(len == sizeof(struct pf_addr));
+		memcpy(&addr->addr.v.tblname, data, len);
+		
+	}else if(addr->addr.type == PF_ADDR_DYNIFTL){
+		data = nvlist_get_binary(addr_wrap_addr, "addr", &len);
+		assert(len == sizeof(struct pf_addr));
+		memcpy(&addr->addr.v.ifname, data, len);
+	}
+
+}
+
+void nv_pool_to_pf_pool(const nvlist_t* nvl, struct pf_pool* pool)
+{
+	size_t port_count;
+	const uint64_t* ports = nvlist_get_number_array(nvl, "proxy_port", &port_count);
+	pool->proxy_port[0] = (u_int16_t)ports[0];
+	pool->proxy_port[1] = (u_int16_t)ports[1];
+	pool->opts = (u_int8_t)nvlist_get_number(nvl, "opts");
+	pool->tblidx = (int)nvlist_get_number(nvl, "tblidx");
+}
+
+void nvrule_to_pfrule(nvlist_t* nvl, struct pf_rule* rule)
+{
+	rule->nr 		= nvlist_get_number(nvl, "nr");
+	nvaddr_to_pfrule_addr(nvlist_get_nvlist(nvl, "src"), &rule->src);
+	nvaddr_to_pfrule_addr(nvlist_get_nvlist(nvl, "dst"), &rule->dst);
+	/* 	4. skip
+	 	5. labels
+	 	6. label
+	 	7. ridentifier */
+	memcpy(&rule->ifname, nvlist_get_string(nvl, "ifname"), sizeof(rule->ifname));
+	memcpy(&rule->qname, nvlist_get_string(nvl, "qname"), sizeof(rule->qname));
+	memcpy(&rule->pqname, nvlist_get_string(nvl, "pqname"), sizeof(rule->pqname));
+	/* 	dnpipe
+	 	dnrpipe
+		dnflags */
+	memcpy(&rule->tagname, nvlist_get_string(nvl, "tagname"), sizeof(rule->tagname));
+	memcpy(&rule->match_tagname, nvlist_get_string(nvl, "match_tagname"), sizeof(rule->match_tagname));
+	memcpy(&rule->overload_tblname, nvlist_get_string(nvl, "overload_tblname"), sizeof(rule->overload_tblname));
+	nv_pool_to_pf_pool(nvlist_get_nvlist(nvl, "rpool"), &rule->rpool);
+	rule->os_fingerprint = (uint32_t)nvlist_get_number(nvl, "os_fingerprint");
+	rule->rtableid = (int)nvlist_get_number(nvl, "rtableid");
+	rule->rule_flag = (uint32_t)nvlist_get_number(nvl, "rule_flag");
+	rule->action 	= (uint8_t)nvlist_get_number(nvl, "action");
+	rule->direction = (uint8_t)nvlist_get_number(nvl, "direction");
+	rule->log 		= (uint8_t)nvlist_get_number(nvl, "log");
+	rule->logif 	= (uint8_t)nvlist_get_number(nvl, "logif");
+	rule->quick 	= (uint8_t)nvlist_get_number(nvl, "quick");
+	rule->ifnot 	= (uint8_t)nvlist_get_number(nvl, "ifnot");
+	rule->match_tag_not = (uint8_t)nvlist_get_number(nvl, "match_tag_not");
+	rule->natpass 	= (uint8_t)nvlist_get_number(nvl, "natpass");
+	rule->keep_state = (uint8_t)nvlist_get_number(nvl, "keep_state");
+	rule->af 		= (uint32_t)nvlist_get_number(nvl, "af");
+	rule->proto 	= (uint8_t)nvlist_get_number(nvl, "proto");
+	rule->type 		= (uint8_t)nvlist_get_number(nvl, "type");
+	rule->code 		= (uint8_t)nvlist_get_number(nvl, "code");
+	rule->flags 	= (uint8_t)nvlist_get_number(nvl, "flags");
+	rule->flagset 	= (uint8_t)nvlist_get_number(nvl, "flagset");
+	rule->min_ttl 	= (uint8_t)nvlist_get_number(nvl, "min_ttl");
+	rule->allow_opts = (uint8_t)nvlist_get_number(nvl, "allow_opts");
+	rule->rt 		= (uint8_t)nvlist_get_number(nvl, "rt");
+	rule->return_ttl = (uint8_t)nvlist_get_number(nvl, "return_ttl");
+	rule->tos 		= (uint8_t)nvlist_get_number(nvl, "tos");
+	rule->set_tos 	= (uint8_t)nvlist_get_number(nvl, "set_tos");
+	rule->anchor_relative = (uint8_t)nvlist_get_number(nvl, "anchor_relative");
+	rule->anchor_wildcard = (uint8_t)nvlist_get_number(nvl, "anchor_wildcard");
+	rule->flush 	= (uint8_t)nvlist_get_number(nvl, "flush");
+	rule->prio 		= (uint8_t)nvlist_get_number(nvl, "prio");
+}
+
+
+static int
+pfctl_do_ioctl(int dev, uint cmd, size_t size, nvlist_t **nvl)
+{
+	struct pfioc_nv nv;
+	void *data;
+	size_t nvlen;
+	int ret;
+
+	data = nvlist_pack(*nvl, &nvlen);
+	if (nvlen > size)
+		size = nvlen;
+
+retry:
+	nv.data = malloc(size);
+	if (nv.data == NULL) {
+		ret = ENOMEM;
+		goto out;
+	}
+
+	memcpy(nv.data, data, nvlen);
+
+	nv.len = nvlen;
+	nv.size = size;
+
+	ret = ioctl(dev, cmd, &nv);
+    if(ret< 0){
+        perror("ioctl_get_rule");
+
+    }
+	if (ret == -1 && errno == ENOSPC) {
+		size *= 2;
+		free(nv.data);
+		goto retry;
+	}
+
+	nvlist_destroy(*nvl);
+	*nvl = NULL;
+
+
+	if (ret == 0) {
+		*nvl = nvlist_unpack(nv.data, nv.len, 0);
+        
+		if (*nvl == NULL) {
+			ret = EIO;
+			goto out;
+		}
+	} else {
+		ret = errno;
+	}
+
+out:
+	free(data);
+	free(nv.data);
+
+	return (ret);
+}
+    
+#else
+    /* Older FreeBSD */
+#endif
+
 
 /*
 */
@@ -38,19 +210,6 @@ int ruleset_exists(int dev, char* anchor, int action )
     return 1;
 }
 
-/*
-* Clear rdr ruleset under `anchor`
-*/
-int clear_ruleset(int dev, char* anchor)
-{
-    printf("Clearing nat ruleset\n");
-    clear_nat_ruleset();
-    printf("Clearing rdr ruleset\n");
-    clear_rdr_ruleset();
-    printf("Clearing pass ruleset\n");
-    clear_pass_ruleset();
-    printf("Ruleset %s cleared succesfully\n");
-}
 
 int clear_nat_ruleset(int dev, char* anchor)
 {
@@ -110,7 +269,7 @@ int clear_pass_ruleset(int dev, char* anchor)
     pt.esize = sizeof(pte);
     pt.array = &pte;
 
-    pte.rs_num = PF_RULESET_PASS;
+    pte.rs_num = PF_RULESET_FILTER;
     strlcpy(pte.anchor, anchor, sizeof(pte.anchor));
     
     if (ioctl(dev, DIOCXBEGIN, &pt) < 0) {
@@ -126,6 +285,22 @@ int clear_pass_ruleset(int dev, char* anchor)
     }
     return 0;
 }
+
+/*
+* Clear rdr ruleset under `anchor`
+*/
+int clear_ruleset(int dev, char* anchor)
+{
+    printf("Clearing nat ruleset\n");
+    clear_nat_ruleset(dev, anchor);
+    printf("Clearing rdr ruleset\n");
+    clear_rdr_ruleset(dev, anchor);
+    printf("Clearing pass ruleset\n");
+    clear_pass_ruleset(dev, anchor);
+    printf("Ruleset %s cleared succesfully\n", anchor);
+    return 0;
+}
+
 
 /*
 * convert cidr int to 32 bit mask
@@ -234,6 +409,7 @@ int fill_pf_addr_and_mask(const char* cidr_str, struct pf_addr_wrap* out)
 
         mask = (prefix == 0) ? 0 : (~0U << (32 - prefix));
         out->v.a.mask.v4.s_addr = htonl(mask);
+        out->iflags = 1;
     }
     return 0;
 }
@@ -270,6 +446,7 @@ int append_rdr_rule(int dev, char* if_name, char* anchor, char* src, int src_por
     pool_ticket = paddr.ticket;
     for(i=0;  i<rdr_count; i++)
     {
+        paddr.af = AF_INET;
         paddr.addr.addr.type = PF_ADDR_ADDRMASK;
         if (fill_pf_addr_and_mask(rdr[i], &paddr.addr.addr) < 0) {
             fprintf(stderr, "Failed to parse rdr address\n");
@@ -973,6 +1150,7 @@ int append_rdr_rule_src_if(int dev, char* if_name, char* anchor, filter_addr* sr
     pool_ticket = paddr.ticket;
     for(i=0;  i<rdr_count; i++)
     {
+        paddr.ticket = pool_ticket;
         paddr.addr.addr.type = PF_ADDR_ADDRMASK;
         if (fill_pf_addr_and_mask(rdr[i], &paddr.addr.addr) < 0) {
             fprintf(stderr, "Failed to parse rdr address\n");
@@ -1088,7 +1266,7 @@ int add_rdr_rule_generic(int dev, char* if_name, char* anchor, filter_addr* src,
     struct pfioc_rule pr = {0};
     struct pfioc_trans_e pte = {0};
     struct pf_rule *r;
-    int i=0, neg=0;
+    int i=0, neg=0, pool_ticket;
     pt.size = 1;
     pt.esize = sizeof(pte);
     pt.array = &pte;
@@ -1101,16 +1279,21 @@ int add_rdr_rule_generic(int dev, char* if_name, char* anchor, filter_addr* src,
         return 1;
     }
 
-    
+    memset(&paddr, 0, sizeof(struct pfioc_pooladdr));
+    strlcpy(paddr.anchor, anchor, sizeof(paddr.anchor));
+    // paddr.action = PF_RDR;
     if (ioctl(dev, DIOCBEGINADDRS, &paddr) < 0) {
         perror("DIOCBEGINADDRS");
         return 1;
     }
 
+    pool_ticket = paddr.ticket;
+
     for(i=0;  i<rdr_count; i++)
     {
+        paddr.af = AF_INET;
+        paddr.ticket = pool_ticket;
         paddr.addr.addr.type = PF_ADDR_ADDRMASK;
-        paddr.addr.ifname[0] = '\0';
         if (fill_pf_addr_and_mask(rdr[i], &paddr.addr.addr) < 0) {
             fprintf(stderr, "Failed to parse rdr address\n");
             return 1;
@@ -1278,6 +1461,7 @@ int append_rdr_rule_generic(int dev, char* if_name, char* anchor, filter_addr* s
     ticket = pr.ticket;
     memset(&paddr, 0, sizeof(struct pfioc_pooladdr));
     strlcpy(paddr.anchor, anchor, sizeof(paddr.anchor));
+    paddr.action = PF_RDR;
     if (ioctl(dev, DIOCBEGINADDRS, &paddr) < 0) 
     {
         perror("DIOCBEGINADDRS");
@@ -1287,6 +1471,8 @@ int append_rdr_rule_generic(int dev, char* if_name, char* anchor, filter_addr* s
     pool_ticket = paddr.ticket;
     for(i=0;  i<rdr_count; i++)
     {
+        paddr.af = AF_INET;
+        paddr.ticket = pool_ticket;
         paddr.addr.addr.type = PF_ADDR_ADDRMASK;
         if (fill_pf_addr_and_mask(rdr[i], &paddr.addr.addr) < 0) {
             fprintf(stderr, "Failed to parse rdr address\n");
@@ -1456,7 +1642,10 @@ int remove_nth_rule(int dev, int r_num, char* anchor, int action)
 
 int remove_rdr_port_rule(int dev, char* anchor, int port, int proto)
 {
-    
+
+#if __FreeBSD_version >= 1500000
+    nvlist_t* nvl;
+#endif
     struct pfioc_rule pr;
     u_int32_t ticket, change_ticket;
     struct pf_rule* r;
@@ -1479,14 +1668,36 @@ int remove_rdr_port_rule(int dev, char* anchor, int port, int proto)
     printf("Total Rules: %d\n", total);
     for(i=0; i< total; i++)
     {
+
         pr.rule.action = PF_RDR;
         strlcpy(pr.anchor, anchor, sizeof(pr.anchor));
         pr.nr = i;
+        ticket = pr.ticket;
+
+#if __FreeBSD_version >= 1500000
+        nvl = nvlist_create(0);
+        nvlist_add_number(nvl, "ruleset", PF_RDR);   // main ruleset
+        nvlist_add_number(nvl, "ticket", ticket);     // usually 0 for read
+        nvlist_add_number(nvl, "nr", i);         // rule index
+        nvlist_add_string(nvl, "anchor", anchor);    // no anchor
+
+        if (pfctl_do_ioctl(dev, DIOCGETRULENV, 8192, &nvl) != 0) {
+            perror("DIOCGETRULENV");
+            nvlist_destroy(nvl);
+            return 1;
+        }
+
+        
+        memset(&pr.rule, 0, sizeof(pr.rule));
+        nvrule_to_pfrule((nvlist_t*)nvlist_get_nvlist(nvl, "rule"), &pr.rule);
+        nvlist_destroy(nvl);
+
+#else
         if(ioctl(dev, DIOCGETRULE, &pr) < 0){
             perror("DIOCGETRULE");
             return -1;
         }
-
+#endif
         printf("%d: %d: %d\n", i, ntohs(pr.rule.dst.port[0]), pr.rule.proto);
         if(pr.rule.dst.port[0] == htons(port) && pr.rule.proto == proto){
             printf("Found Rule at %d\n", i);
@@ -1544,8 +1755,8 @@ int add_nat_rule_generic(int dev, char* if_name, char* anchor, filter_addr* src,
 
     for(i=0;  i<rdr_count; i++)
     {
+        paddr.af = AF_INET;
         paddr.addr.addr.type = PF_ADDR_DYNIFTL;
-        paddr.addr.ifname[0] = '\0';
         strlcpy(paddr.addr.addr.v.ifname, rdr[i], sizeof(paddr.addr.addr.v.ifname));
         paddr.addr.addr.v.a.mask.v4.s_addr = 0xffffffff;
 
@@ -1728,6 +1939,7 @@ int add_nat_rule(int dev, char* if_name, char* anchor, filter_addr* src, int src
     pool_ticket = paddr.ticket;
     for(i=0;  i<rdr_count; i++)
     {
+        paddr.af = AF_INET;
         paddr.addr.addr.type = PF_ADDR_ADDRMASK;
         if (fill_pf_addr_and_mask(rdr[i], &paddr.addr.addr) < 0) {
             fprintf(stderr, "Failed to parse rdr address\n");
@@ -1867,7 +2079,9 @@ int add_nat_rule(int dev, char* if_name, char* anchor, filter_addr* src, int src
 
 int remove_nat_port_rule(int dev, char* anchor, int port, int proto)
 {
-    
+#if __FreeBSD_version >= 1500000
+    nvlist_t* nvl;
+#endif
     struct pfioc_rule pr;
     u_int32_t ticket, change_ticket;
     struct pf_rule* r;
@@ -1889,13 +2103,34 @@ int remove_nat_port_rule(int dev, char* anchor, int port, int proto)
     printf("Total Rules: %d\n", total);
     for(i=0; i< total; i++)
     {
-        pr.rule.action = PF_NAT;
+        pr.rule.action = PF_RDR;
         strlcpy(pr.anchor, anchor, sizeof(pr.anchor));
         pr.nr = i;
+
+#if __FreeBSD_version >= 1500000
+
+        nvlist_add_number(nvl, "ruleset", PF_NAT);   // main ruleset
+        nvlist_add_number(nvl, "ticket", ticket);     // usually 0 for read
+        nvlist_add_number(nvl, "nr", i);         // rule index
+        nvlist_add_string(nvl, "anchor", anchor);    // no anchor
+
+        if (pfctl_do_ioctl(dev, DIOCGETRULENV, 8192, &nvl) != 0) {
+            perror("ioctl");
+            nvlist_destroy(nvl);
+            return 1;
+        }
+
+        
+        memset(&pr.rule, 0, sizeof(pr.rule));
+        nvrule_to_pfrule((nvlist_t*)nvlist_get_nvlist(nvl, "rule"), &pr.rule);
+        nvlist_destroy(nvl);
+
+#else
         if(ioctl(dev, DIOCGETRULE, &pr) < 0){
             perror("DIOCGETRULE");
             return -1;
         }
+#endif
 
         printf("%d: %d: %d\n", i, ntohs(pr.rule.dst.port[0]), pr.rule.proto);
         if(pr.rule.dst.port[0] == htons(port) && pr.rule.proto == proto){
@@ -1958,6 +2193,7 @@ int append_nat_rule_src_if(int dev, char* if_name, char* anchor, filter_addr* sr
     pool_ticket = paddr.ticket;
     for(i=0;  i<rdr_count; i++)
     {
+        paddr.af = AF_INET;
         paddr.addr.addr.type = PF_ADDR_ADDRMASK;
         if (fill_pf_addr_and_mask(rdr[i], &paddr.addr.addr) < 0) {
             fprintf(stderr, "Failed to parse rdr address\n");
@@ -2099,6 +2335,7 @@ int append_nat_rule_generic(int dev, char* if_name, char* anchor, filter_addr* s
     pool_ticket = paddr.ticket;
     for(i=0;  i<rdr_count; i++)
     {
+        paddr.af = AF_INET;
         paddr.addr.addr.type = PF_ADDR_DYNIFTL;
         // if (fill_pf_addr_and_mask(rdr[i], &paddr.addr.addr) < 0) {
         //     fprintf(stderr, "Failed to parse rdr address\n");
