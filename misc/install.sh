@@ -20,7 +20,7 @@ else
 fi
 
 # Create a venv for dependencies installation
-python -m venv env
+python -m venv --system-site-packages env
 . env/bin/activate
 
 ./env/bin/python -m ensurepip
