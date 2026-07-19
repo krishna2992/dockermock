@@ -5,6 +5,9 @@ from pathlib import Path
 from .lib import *
 from .wrappers import *
 import collections
+import logging
+
+logger = logging.getLogger(__name__)
 
 CENOERR   = 0
 CERROR    = -1
@@ -60,7 +63,7 @@ def start_jail_from_json(data):
     iovec, buf = json_to_iovec(data) 
     jid = jail_set_wrapper(iovec, JAIL_CREATE)
     if jid<0:
-        print(buf.value)
+        logger.error(f'{buf.value}')
     return jid
 
 def check_interface_exist(name:str):
@@ -76,7 +79,7 @@ def create_bridge(name:str=None):
     try:
         return create_interface(bridge_name)
     except OSError as e:
-        print("Error:", e.strerror, file=sys.stderr)
+        logger.error(f"Error:{e.strerror}")
         return None
 
 
@@ -88,18 +91,18 @@ def create_epair(name:str|None=None, sock=None):
     try:
         return create_interface(epair_name, sock)
     except OSError as e:
-        print("Error:", e.strerror, file=sys.stderr)
+        logger.error(f"Error:{e.strerror}")
         return None
 
 def destroy_if(name):
     if not name:
         return CEINVALD
     try:
-        print("Destrying interface: ", name)
+        logger.debug(f"Destrying interface:{name} ")
         destroy_interface(name)
         return CENOERR
     except OSError as e:
-        print("Error:", e.strerror, file=sys.stderr)
+        logger.error(f"Error:{e.strerror}")
         return CERROR
 
 
@@ -111,7 +114,7 @@ def attach_vnet_ifaces(j_name, if_name):
         move_to_jail(if_name, jid)
         return CENOERR
     except OSError as e:
-        print("Error:", e.strerror, file=sys.stderr)
+        logger.error(f"Error:{e.strerror}")
         return CERROR
 
 
@@ -120,11 +123,11 @@ def deattach_vnet_ifaces(j_name, if_name):
     if jid<0:
         return CENOJAIL
     try:
-        print('Remove from jail', if_name)
+        logger.debug(f'Remove from jail: {if_name}')
         remove_from_jail(if_name, jid)
         return CENOERR
     except OSError as e:
-        print("deattacH_vnet:", e.strerror)
+        logger.error(f"deattach_vnet:{e.strerror}" )
         return CERROR
     
     
@@ -140,7 +143,7 @@ def remove_jail_from_name(name):
         jail_remove_wrapper(jid)
         return CENOERR
     except OSError as e:
-        print("remove_jail_from_name:", e.strerror)
+        logger.error(f"remove_jail_from_name:{e.strerror}")
         return CERROR
     
 
@@ -159,42 +162,39 @@ def jail_attach(name):
 def mount_jail_defvs(name, path, ruleset=4):
     root = path
     if not root:
-        print('No path specified. Exiting.. ')
+        logger.debug('No path specified. Exiting.. ')
         return CINVALD
     if not os.path.exists(root):
-        print(f"Path '{root}' doesn't exist")
+        logger.error(f"Path '{root}' doesn't exist")
         return CENOPATH
     dev_path = os.path.join(root, 'dev')
     if not os.path.exists(dev_path):
         os.mkdir(dev_path)
     if os.path.ismount(dev_path):
         return CEMNTPOT
-    print("Mounting devfs on:",  dev_path)
     res = mount_devfs(dev_path, ruleset)
     if res!=0:
         errno = ctypes.get_errno()
-        print("mount_jail_defvs:", os.strerror(ctypes.get_errno()))
+        logger.error(f"mount_jail_defvs: {os.strerror(ctypes.get_errno())}")
         return CEMNTDEV
     return CENOERR
 
 def mount_jail_tmpfs(name, path):
     root = path
     if not root:
-        print('No path specified. Exiting.. ')
         return CINVALD
     if not os.path.exists(root):
-        print(f"Path '{root}' doesn't exist")
+        logger.error(f"Path '{root}' doesn't exist")
         return CENOPATH
     dev_path = os.path.join(root, 'tmp')
     if not os.path.exists(dev_path):
         os.mkdir(dev_path)
     if os.path.ismount(dev_path):
         return CEMNTPOT
-    print("Mounting tmpfs on:",  dev_path)
     res = mount_tmpfs(dev_path)
     if res!=0:
         errno = ctypes.get_errno()
-        print("mount_jail_tmpfs:", os.strerror(ctypes.get_errno()))
+        logger.error(f"mount_jail_tmpfs: {os.strerror(ctypes.get_errno())}")
         return CEMNTDEV
     return CENOERR
 
@@ -204,7 +204,7 @@ def unmount_jail_mounts(path):
         unmount(path)
         return CENOERR
     except OSError as e:
-        print(f"unmount_jail_mounts: [Error {e.errno}] {e.strerror} ", file=sys.stderr)
+        logger.error(f"unmount_jail_mounts: [Error {e.errno}] {e.strerror} ")
         return CEUMNTERR
 
 
@@ -215,7 +215,7 @@ def unmount_jail_defvs(path):
         unmount(dev_path)
         return CENOERR
     except OSError as e:
-        print(f"unmount_jail_devfs: [Error {e.errno}] {e.strerror} ", file=sys.stderr)
+        logger.error(f"unmount_jail_devfs: [Error {e.errno}] {e.strerror} ")
         return CEUMNTERR
 
 def unmount_jail_tmpfs(path):
@@ -225,7 +225,7 @@ def unmount_jail_tmpfs(path):
         unmount(dev_path)
         return CENOERR
     except OSError as e:
-        print(f"unmount_jail_tmpfs: [Error {e.errno}] {e.strerror} ", file=sys.stderr)
+        logger.error(f"unmount_jail_tmpfs: [Error {e.errno}] {e.strerror} ")
         return CEUMNTERR
 
 
@@ -234,7 +234,7 @@ def set_if_address(if_name, ip_addr, net_mask, brodcast_addr, sock=None):
         res = set_ip_address(if_name, ip_addr, net_mask, brodcast_addr, sock)
         return CENOERR
     except OSError as e:
-        print(f"set_if_address: [Error {e.errno}] {e.strerror} ", file=sys.stderr)
+        logger.error(f"set_if_address: [Error {e.errno}] {e.strerror} ")
         return CERROR
     
 
@@ -249,7 +249,7 @@ def mount_host_to_jail(jail_path, host_path, flags):
     res= mount_nullfs(jail_path, host_path, flags)
     if res!=0:
         errno = ctypes.get_errno()
-        print(f"Failed to Mount {host_path!r} to {jail_path!r}: {os.strerror(errno)}")
+        logger.error(f"Failed to Mount {host_path!r} to {jail_path!r}: {os.strerror(errno)}")
         return CERROR
     return CENOERR
 

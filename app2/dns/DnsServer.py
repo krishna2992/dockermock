@@ -6,6 +6,7 @@ import socket
 import json
 import ipaddress
 import subprocess
+import logging
 from dnslib import DNSRecord, RR, QTYPE, A  # Make sure this import is at top
 from .SubnetTrie import SubnetTrie
 from .DnsTree import DnsTree
@@ -44,7 +45,7 @@ class DynamicResolver(BaseResolver):
                 data, _ = self.sock.recvfrom(512)
                 return DNSRecord.parse(data)
             except Exception as e:
-                print(f"[DNS] Fallback to {forwarder} failed: {e}")
+                logger.error(f"[DNS] Fallback to {forwarder} failed: {e}")
 
         return reply
 
@@ -52,9 +53,7 @@ class DynamicResolver(BaseResolver):
 
 def run_dns(bind_ip, subnetTrie, dnsTree, port=53):
     resolver = DynamicResolver(subnetTrie, dnsTree)
-    # resolver.add_network("office",       "10.0.4.0/24")
-    print(bind_ip, subnetTrie, dnsTree, port)
-    logger = DNSLogger(log="", prefix=False)
+    logger = DNSLogger(log="error", prefix=False)
     print(os.getpid())
     subprocess.run(['sockstat', '-4', '-p', '53'])
     server = DNSServer(resolver, address=bind_ip, port=port, logger=logger)

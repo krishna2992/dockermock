@@ -12,6 +12,9 @@ import requests as r
 from datetime import datetime 
 import os
 import ipaddress
+import logging
+
+logger = logging.getLogger(__name__)
 
 # Store Jail Object against Child PID
 JAIL_DICT = {}
@@ -55,7 +58,6 @@ def register_ports(network, ports):
         ports[i]['rdr'] = [ip]
     
     data = {'network':network['name'], 'ports':ports}
-    print(data)
     try:
         res = r.post(f'http://localhost:5000/api/ports', json=data)
     except Exception as e:
@@ -103,41 +105,39 @@ def register_jail_network(name, networks):
         subnet = f'{network.get("subnet")}/{network.get("prefix")}'
         net_if = network.get('name') or 'default'
 
-        print(f"Registring subnet {subnet} for network {net_if!r}")
+        logger.debug(f"Registring subnet {subnet} for network {net_if!r}")
         res = register_subnet(net_if, subnet)
         if res != 201:
             raise Exception('Failed to register subnet')
 
-        print(f'Registering {ip} for  {name}')
+        logger.debug(f'Registering {ip} for  {name}')
         res = register_dns_entry(net_if, name, str(ip.ip))
         if res != 201:
             raise Exception('Failed to register ip')
             
 
 def start_container(ID, name, jail_json) -> int:
-    print(jail_json[1])
-    print(jail_json[0])
     jail = Jail(ID, name, True, jail_json[1], jail_json[0])
     try:
         jail.create_jail()
         
         if jail.jid<0:
-            print(os.strerror(ctypes.get_errno()))
+            logger.error(f'{os.strerror(ctypes.get_errno())}')
             notity_status(name, 100, "Failed to Create JAIL")
             return -1
         networks = jail_json[0]['networks']
-        print('Registring networks')
+        logger.debug('Registring networks')
         if networks:
             register_jail_network(name, networks)
-            print(f'Ports: {jail_json[0].get("ports")}')
+            logger.debug(f'Ports: {jail_json[0].get("ports")}')
             if  jail_json[0].get('ports'):
                 ports = jail_json[0]['ports']
                 for network in networks:
-                    print(f'Registering {ports} for {network}')
+                    logger.debug(f'Registering {ports} for {network}')
                     register_ports(network, jail_json[0]['ports'])
         
     except Exception as e:
-        print("Got exception", e)
+        logger.error(f"Got exception: {str(e)}")
         jail.destroy_jail()
         notity_status(name, 100, "Failed to CREATE EPAIR")
         traceback.print_exception(type(e), e, e.__traceback__)
@@ -151,27 +151,20 @@ def start_container(ID, name, jail_json) -> int:
             redirect_standard_fds('parent.log')
             signal.signal(signal.SIGTERM, signal.SIG_DFL)
             signal.signal(signal.SIGINT, signal.SIG_DFL)
-            print(f"[CHILD] PID: {os.getpid()}")
+            logger.info(f"[CHILD] PID: {os.getpid()}")
             jail.child()
         except Exception as e:
             # Redirect to stderr (which now points to log file)
-            print(f"[Child] Error: {e}", file=sys.stderr)
+            logger.error(f"[Child] Error: {e}")
             sys.exit(1)
     
-    print(f"[Parent] Forked child with PID {pid}, ppid: {os.getpid()}")
+    logger.info(f"[Parent] Forked child with PID {pid}, ppid: {os.getpid()}")
     # Store jail object and use it for cleaning
     global JAIL_DICT
     JAIL_DICT[pid] = jail    
     # return pid and listen for exit event
     return pid
-    # _, status = os.waitpid(pid, 0)
-    # exit_code = os.WEXITSTATUS(status)
-    # print(f"[Parent] Child exited with code {exit_code}")
-    # print(f"[Parent] Destroying jail with JID: {jail.jid}")
-    # jail.destroy_jail()
-    # notity_status(name, exit_code, f'Exited on: {datetime.now().isoformat()}')   
-    # print(f'Container Stopped Succesfully') 
-    # exit(0)
+    
 
 
 
@@ -222,13 +215,11 @@ def transform_json(data):
 def process_container(name):
     res = r.get(f'http://localhost:5000/api/container/{name}')
     if res.status_code != 200:
-        print(res.content)
-        # print('Existing...')
+        logger.error(res.text)
         return -1
     data = res.json()
     data = transform_json(data)  
-    print(json.dumps(data))  
-    print('Calling Container start')
+    logger.info('Calling Container start')
     return start_container(1, name, data)
 
 
@@ -241,9 +232,9 @@ def track_process(kq, process_pid):
             fflags=select.KQ_NOTE_EXIT
         )
         kq.control([kevent], 0)
-        print(f"Added {process_pid} for tracking")
+        logger.info(f"Added {process_pid} for tracking")
     except Exception as e:
-        print(f'Failed to add process {process_pid} for monitoring')
+        logger.error(f'Failed to add process {process_pid} for monitoring')
         traceback.print_exception(type(e), e, e.__traceback__)
 
 
@@ -255,16 +246,15 @@ def remove_container(process_pid, notify=True):
             return
         _, status = os.waitpid(process_pid, 0)
         exit_code = os.WEXITSTATUS(status)
-        print(f"[Parent] Child exited with code {exit_code}")
-        print(f"[Parent] Destroying jail with JID: {jail.jid}")
+        logger.info(f"[Parent] Child exited with code {exit_code}")
+        logger.info(f"[Parent] Destroying jail with JID: {jail.jid}")
         jail.destroy_jail()
         JAIL_DICT.pop(process_pid)
-        print('Notify:', notify)
         if notify==True:
             notity_status(jail.name, exit_code, f'Exited on: {datetime.now().isoformat()}')   
-        print(f'Container Stopped Succesfully') 
+        logger.info(f'Container {jail.name} Stopped Succesfully') 
     except Exception as e:
-        print(f'Failed to remove {process_pid} jail')
+        logger.error(f'Failed to remove {process_pid} jail')
         traceback.print_exception(type(e), e, e.__traceback__)
 
 
@@ -283,10 +273,10 @@ def clean_all_jails(kq):
         for ev in events:
             if ev.filter == select.KQ_FILTER_PROC:
                 if ev.fflags & select.KQ_NOTE_EXIT:
-                    print(f"Process {ev.ident} exited during shutdown")
+                    logger.info(f"Process {ev.ident} exited during shutdown")
                     remove_container(ev.ident, notify=False)
 
-    print("All containers cleaned up")
+    logger.info("All containers cleaned up")
     return
 
 
@@ -309,7 +299,7 @@ def run(sock_fd):
 
     buffer = b""
 
-    print("Child worker started")
+    logger.info("Child worker started")
 
     try:
         while True:
@@ -318,14 +308,14 @@ def run(sock_fd):
             for ev in events:
                 if ev.filter == select.KQ_FILTER_PROC:
                     if ev.fflags & select.KQ_NOTE_EXIT:
-                        print(f"Process {ev.ident} exited")
+                        logger.info(f"Process {ev.ident} exited")
                         remove_container(ev.ident)
                         break
                 
                 data = sock.recv(4096)
 
                 if not data:
-                    print("Parent closed socket")
+                    logger.info("Parent closed socket")
                     clean_all_jails(kq)
                     return
 
@@ -336,7 +326,7 @@ def run(sock_fd):
                     msg = line.decode()
 
                     name = msg.strip()
-                    print("Received container:", name)
+                    logger.info(f"Received container:{name}")
 
                     cont_pid = process_container(name)
                     if cont_pid and cont_pid!=-1:

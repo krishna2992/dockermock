@@ -1,7 +1,7 @@
 # !/bin/sh
 
 #  First install pkg requirments
-ASSUME_ALWAYS=yes sudo pkg install py311-sqlite3 libpfctl py311-libzfs
+ASSUME_ALWAYS=yes sudo pkg install py311-sqlite3 libpfctl py311-libzfs unionfs-fusefs
 
 NEEDS_REBOOT=0
 # Set rctl enable in loader

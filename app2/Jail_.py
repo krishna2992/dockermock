@@ -13,7 +13,9 @@ import sys
 import traceback
 import os
 import ipaddress
+import logging
 
+logger = logging.getLogger(__name__)
 
 PATH_ENV = {"PATH":"/usr/local/bin:/sbin:/bin:/usr/sbin:/usr/bin:/usr/local/sbin"}
 
@@ -42,25 +44,25 @@ class Jail:
             return 
         res = mount_jail_defvs(self.name, self.json.get("path"), self.json.get("devfs_ruleset", 4))
         if res!= CENOERR:
-            print("ERROR: Failed to mount devfs")
+            logger.error("ERROR: Failed to mount devfs")
         self.devfs_mounted = True
 
     def mount_tmpfs(self):
         res = mount_jail_tmpfs(self.name, self.json.get("path"))
         if res!= CENOERR:
-            print("ERROR: Failed to mount tmpfs")
+            logger.error("ERROR: Failed to mount tmpfs")
 
     def unmount_tmpfs(self):
         res = unmount_jail_tmpfs(self.json.get("path"))
         if res!= CENOERR:
-            print("ERROR: Failed to unmount tmpfs")
+            logger.error("ERROR: Failed to unmount tmpfs")
 
     def unmount_devfs(self):
         if not self.devfs_mounted:
             return 
         res = unmount_jail_defvs(self.json.get("path"))
         if res!= CENOERR:
-            print("ERROR: Failed to unmount devfs")
+            logger.error("ERROR: Failed to unmount devfs")
         self.devfs_mounted = False
 
     def handle_fs_umounts(self):
@@ -86,7 +88,6 @@ class Jail:
         
 
     def create_jail(self)-> int:
-        # print(self.json)
 
         self.jid = start_jail_from_json(self.json)
         # Handle Jail Networking Setup
@@ -113,12 +114,12 @@ class Jail:
         if not epair:
             return CERROR
         self.epair.append(epair)
-        print(f'Created interface ({epair[:-1]}a, {epair[:-1]}b)')
-        print(f"Adding {epair[:-1]+'b'} to host {network.get('name')}")
+        logger.debug(f'Created interface ({epair[:-1]}a, {epair[:-1]}b)')
+        logger.debug(f"Adding {epair[:-1]+'b'} to host {network.get('name')}")
         try:            
             bridge_if(network.get('name'), epair[:-1]+'b', add=True)
         except OSError as e:
-            print(f"Failed to add {epair[:-1]+'b'} to {network.get('name')}")
+            logger.error(f"Failed to add {epair[:-1]+'b'} to {network.get('name')}")
             return CERROR
         return CENOERR
         
@@ -144,14 +145,11 @@ class Jail:
                     path.parent.mkdir(parents=True, exist_ok=True)
                     path.touch(exist_ok=True)
                 else:
-                    print("Path does not exist or is neither")
-                    print('Creating Target as directory')
                     os.makedirs(target, exist_ok=True)
-                    print('Crating destination as directory')
                     os.makedirs(dest, exist_ok=True)
                 
             flags = 0
-            print(f'Mounting {target} on {dest}')
+            logger.debug(f'Mounting {target} on {dest}')
             if m['readonly'] == True:
                 flags |= MNT_RDONLY
             mount_host_to_jail(dest, target, flags)
@@ -178,11 +176,11 @@ class Jail:
     def deattach_epair(self):
         if not self.epair:
             return 
-        print("Deattching", self.epair)
+        logger.debug(f"Deattching: {self.epair}")
         for epair in self.epair:
             res= deattach_vnet_ifaces(self.name, epair)
             if res!= CENOERR:
-                print("Failed to deattach interface ", epair)
+                logger.error(f"Failed to deattach interface: {epair} ")
              
         return 
         
@@ -191,7 +189,7 @@ class Jail:
             return
         for epair in self.epair:
             if(destroy_if(epair) != CENOERR):
-                print("Failed to destroy", epair)
+                logger.error("Failed to destroy: {epair}")
         self.epair = []
         return
 
@@ -213,7 +211,7 @@ class Jail:
             raise CustomException(f"User '{username}' not found", self.name)
         except PermissionError as e:
             raise CustomException(f"Permission error: {e}", self.name)
-        print(f'Succesfully switched to user {username}')
+        logger.debug(f'Succesfully switched to user {username}')
             
 
     def attach_inteface_up(self):
@@ -224,9 +222,9 @@ class Jail:
         for epair in self.epair:
             res = attach_vnet_ifaces(self.name, epair)
             if res!=CENOERR:
-                print(f'Failed to attach interface to jail {self.name!r}: {epair}', file=sys.stderr)
+                logger.error(f'Failed to attach interface to jail {self.name!r}: {epair}')
         
-        print(f'Succesfully Attached {self.epair}')
+        logger.debug(f'Succesfully Attached {self.epair}')
         
     def setup_network(self):
         '''Setup Jail Networking
@@ -249,26 +247,26 @@ class Jail:
                 ip_interface = ipaddress.ip_interface(network.get('ip')+'/'+str(network.get('prefix')))
                 res = set_if_address(self.epair[i], str(ip_interface.ip), str(ip_interface.network.netmask), brodcast_addr=None)
                 if res!= CENOERR:
-                    print(f"Failed to set ip address for {self.epair[i]}", file=sys.stderr)
+                    logger.error(f"Failed to set ip address for {self.epair[i]}")
 
                 if 'subnet' in network and network['subnet']:
                     subnet_str = str(network['subnet'])+'/'+str(network['prefix'])
                     host = str(next(ipaddress.ip_network(subnet_str).hosts()))
                     nameservers.append(host)
-                    print(f'Adding route {subnet_str} via {host}')
+                    logger.debug(f'Adding route {subnet_str} via {host}')
                     # subprocess.run(['route', 'add', subnet_str, 'via',host])
                     try:
                         add_route(str(network['subnet']), offset_to_netmask(network['prefix']), host)
                     except Exception as e:
-                        print('Failed to add route', subnet_str, e)
+                        logger.error(f'Failed to add route: {subnet_str}\nError: {e}')
         if nameservers:
             # Add default
-            print('Adding default route:', nameservers[0])
+            logger.debug(f'Adding default route: {nameservers[0]}')
             # subprocess.run(['route', 'add', 'default', str(nameservers[0])])
             try:
                 add_route("0.0.0.0", "0.0.0.0", nameservers[0])
             except Exception as e:
-                print('Failed to add default route', nameservers[0], e)
+                logger.error('Failed to add default route: {nameservers[0]}\nError: {e}')
         else:
             nameservers = ['8.8.8.8', '1.1.1.1']         
         nstr = '# Generated by Jail\n'
@@ -277,7 +275,7 @@ class Jail:
 
         with open('/etc/resolv.conf', 'w+') as f:
             f.write(nstr)
-        print("Setup Complete")
+        logger.info("Setup Complete")
 
 
     def setup_jail(self):
@@ -287,11 +285,11 @@ class Jail:
         '''
         res = subprocess.run(['/bin/sh', '/etc/rc'])
         self.setup_network()
-        print("Setup Complete")
+        logger.info("Setup Complete")
 
     def stop_jail(self):
         if not self.jid and not self.name:
-            print('JID and Name both are null. Failed to stop jail')
+            logger.error('JID and Name both are null. Failed to stop jail')
             return 
 
         jid = str(self.jid or self.name)
@@ -300,7 +298,7 @@ class Jail:
         res = remove_jail_from_name(self.name)
         # res = subprocess.run(['jail', '-r', jid])
         if res==-1:
-            print(f'Failed to remove jail: {jid}')
+            logger.error(f'Failed to remove jail: {jid}')
         return 
         
     def handle_unmount(self):
@@ -311,11 +309,11 @@ class Jail:
         for m in mounts:
             dest = os.path.join(jail_root , m['source'][1:])
             if unmount_jail_mounts(dest) != CENOERR:
-                print(f'Failed to unmount {dest}')
+                logger.error(f'Failed to unmount {dest}')
 
 
     def destroy_jail(self):
-        print(f'Stopping Jail {self.name}')
+        logger.info(f'Stopping Jail {self.name}')
         try:
             self.deattach_epair()
             self.stop_jail()
@@ -325,9 +323,9 @@ class Jail:
             try:
                 rctl_remove_rule(f"jail:{self.name}")
             except Exception as e:
-                print(e)
+                logger.error(f'{e}')
         except Exception as e:
-            print(e)
+            logger.error(f'{e}')
 
     def write_pid(self):
         path = self.kwargs.get('path')
@@ -340,7 +338,7 @@ class Jail:
         self.write_pid()
         res =  self.jail_attach()
         if res!= 0:
-            print(os.strerror(ctypes.get_errno()), file=sys.stderr)
+            logger.error(f'{os.strerror(ctypes.get_errno())}')
             exit(CEATTERR)
         self.setup_jail()
         try:
@@ -364,14 +362,12 @@ class Jail:
             if command:
                 args.extend(command)
             envs = self.kwargs.get('env', {})
-            print('kwargs', self.kwargs.get('workingDir'))
             # if self.kwargs.get('kwargs'):
             os.chdir(self.kwargs.get('workingDir', '/'))
-            print(os.listdir())
             os.execvpe(first, args=args, env=envs)
         except OSError as e:    
             traceback.print_exc()
-            print(f"[Child] Exec failed: {e}", file=sys.stderr)
+            logger.error(f"[Child] Exec failed: {e}")
             sys.exit(128)
         except Exception as e:
             traceback.print_exc()
@@ -383,11 +379,11 @@ class Jail:
         
         rules= convert_to_rctl_rules(self.kwargs.get('R_LIMITS'), f'name:{self.name}')
         for rule in rules:
-            print('Adding rule :', rule)
+            logger.debug(f'Adding rule :{rule}')
             try:
                 rctl_add_rule(rule=rule)
             except Exception as e:
-                print(e)
+                logger.error(f'{e}')
         
         return 
 

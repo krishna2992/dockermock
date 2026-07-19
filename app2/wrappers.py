@@ -1,6 +1,9 @@
 from ctypes.util import find_library
 import os
 import ctypes 
+import logging
+
+logger = logging.getLogger(__name__)
 
 libc_path = find_library("c")
 libc = ctypes.CDLL(libc_path, use_errno=True)
@@ -214,7 +217,7 @@ def mount_nullfs(path:str, from_path:str, flags=0):
     return libc.nmount(iov_array, len(iov_array), flags)
 
 def unmount(path):
-    print("Unmouting:", path)
+    logger.debug(f"Unmouting: {path}")
     res = libc.unmount(path.encode('utf-8'), 0)
     if res != 0:
         errno = ctypes.get_errno()

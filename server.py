@@ -2,14 +2,46 @@ import os
 import signal
 import socket
 import traceback
+import atexit
 from flask import Flask, jsonify, request, abort
 from threading import Lock
 from app2.lib import set_ip_address
 from app2.JailManager_ import JailManager, STATE, NET_TYPE
 from app2.dns import SubnetTrie, DnsTree, run_dns
 import kqueue_parent 
+import logging
+import colorlog
+from colorlog import ColoredFormatter
 
-import atexit
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s | %(levelname)s | %(message)s",
+    datefmt="%Y-%m-%d %H:%M:%S"
+)
+
+# Create a colored handler
+handler = colorlog.StreamHandler()
+handler.setFormatter(
+    colorlog.ColoredFormatter(
+        "%(asctime)s | %(log_color)s%(levelname)-4s%(reset)s | %(name)s | %(message)s",
+        datefmt="%Y-%m-%d %H:%M:%S",
+        log_colors={
+            "DEBUG": "cyan",
+            "INFO": "green",
+            "WARNING": "yellow",
+            "ERROR": "red",
+            "CRITICAL": "red,bg_white",
+        },
+    )
+)
+
+root_logger = logging.getLogger()
+root_logger.handlers.clear()
+root_logger.addHandler(handler)
+
+logger = logging.getLogger(__name__)
+
+
 app = Flask(__name__)
 subnetTrie = SubnetTrie()
 dnsTree = DnsTree()
@@ -22,7 +54,7 @@ child_pid = None
 
 
 def handle_sigterm(signum, frame):
-    print("SIGTERM received. Shutting down gracefully...")
+    logger.info("SIGTERM received. Shutting down gracefully...")
     raise KeyboardInterrupt
 
 signal.signal(signal.SIGTERM, handle_sigterm)
@@ -32,34 +64,27 @@ lock = Lock()
 
 def mark_all_exited():
     try:
-        # rows = manager.cursor.execute("select name from containers where status='running'").fetchall()
-        # for row in rows:
-        #     try:
-        #         status = manager.stop_jail(row[0])
-        #     except Exception  as e:
-        #         print(e)
-
         manager.cursor.execute("update containers set status='exited' where status='running'")
         manager.conn.commit()
     except Exception as e:
-        print('Failed to mark all jails completed')
-        print(e)
+        logger.error('Failed to mark all jails completed')
+        logger.error(f'{e}')
 
 
 def shutdown():
-    print("Signaling Child Process to Exit")
-    print('Closing Parent socket')
+    logger.info("Signaling Child Process to Exit")
+    logger.info('Closing Parent socket')
     parent_sock.close()
     mark_all_exited()
     global child_pid
     if child_pid:
-        print(f'Waiting on child {child_pid}')
+        logger.info(f'Waiting on child {child_pid}')
         try:
             _, status = os.waitpid(child_pid, 0)
             exit_code = os.WEXITSTATUS(status)
-            print(f"[Server] KqueueParent exited with code {exit_code}")
+            logger.info(f"[Server] KqueueParent exited with code {exit_code}")
         except Exception as e:
-            print(f'Failed to wait on kqueue_parent')
+            logger.error(f'Failed to wait on kqueue_parent')
             traceback.print_exception(type(e), e, e.__traceback__)
 
     
@@ -67,13 +92,13 @@ def shutdown():
 
 def handle_close():
     shutdown()
-    print('Closing Manager')
+    logger.info('Closing Manager')
     manager.close()
-    print('Exiting')
+    logger.info('Exiting')
 
 
 def create_lo0_addr():
-    print('Setting Up DNS Server...')
+    logger.info('Setting Up DNS Server...')
     set_ip_address("lo0", "127.0.0.11", "255.255.255.255", broadcast_addr=None, sock=None)
 
 @app.route('/api/container', methods=['GET'])
@@ -278,7 +303,7 @@ if __name__ == '__main__':
     if child_pid == 0:
         parent_sock.close()
         kqueue_parent.run(child_sock.fileno())
-        print('Child Completed')
+        logger.info('Child Completed')
         os._exit(0)
 
     else:

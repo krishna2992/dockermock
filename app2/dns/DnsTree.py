@@ -1,4 +1,6 @@
 import threading
+import logging
+logger = logging.getLogger(__name__)
 # import subprocess
 # Define the DNS tree classes
 class DnsTreeNode:
@@ -21,7 +23,7 @@ class DnsTree:
             start = end
 
     def insert(self, domain, ip):
-        print(f"Adding {domain} -> {ip}")
+        logger.info(f"Adding {domain} -> {ip}")
         with self.lock:
             node = self.root
             for part in self.rsplit_generator(domain):
@@ -33,7 +35,7 @@ class DnsTree:
 
 
     def clear_ip(self, domain):
-        print(f"Adding {domain} -> {ip}")
+        logger.info(f"Adding {domain} -> {ip}")
         with self.lock:
             node = self.root
             for part in self.rsplit_generator(domain):
@@ -44,7 +46,6 @@ class DnsTree:
 
 
     def collect_from(self, domain):
-        print(f'Get {domain}')
         node = self.root
         for part in self.rsplit_generator(domain):
             if part in node.children:
