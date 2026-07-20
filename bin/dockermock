@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-
+import sys
 import argparse
 import requests as r
 from requests.exceptions import ConnectionError, Timeout, HTTPError
@@ -9,6 +9,7 @@ import os
 import platform
 import re
 import json
+from exec import container_exec
 
 API_BASE = 'http://localhost:5000'
 
@@ -307,7 +308,6 @@ def get_container(args):
         print(res.content)
         return -1    
     data = res.json()
-    print(json.dumps(data, indent=4))
     return 0
 
 
@@ -319,6 +319,24 @@ def attach_network(args):
         return -1
     print('Successfully Attached container {args.container!r} to network {args.network!r}')
     return 0
+
+def pre_exec(args):
+    try:
+        res = r.get(f'{API_BASE}/api/container/{args.name}')
+        if res.status_code!=200:
+            print(res.content)
+            print(f'Container {args.name} not found')
+            sys.exit(-1)
+        data = res.json()
+    
+        container_exec(data, args.cmd)
+    except ConnectionError as e:
+        print(f'Unable to connect: {e}')
+    except Exception as e:
+        print(f'Failed to exec: {str(e)}')
+    finally:
+        sys.exit(-1)
+
 
 # Main CLI
 def main():
@@ -443,6 +461,15 @@ def main():
     volume_create_parser.set_defaults(func=create_volume)
 
     
+    # exec parser
+    exec_parser = subparsers.add_parser("exec", help="Execute commands in container")
+    exec_parser.add_argument("name", help="Name of the container")
+    exec_parser.add_argument(
+            "cmd",
+            nargs=argparse.REMAINDER,
+            help="Command to execute",
+        )
+    exec_parser.set_defaults(func=pre_exec)
 
     args = parser.parse_args()
 
@@ -487,6 +514,8 @@ def main():
             args.func(args)
         else:
             volumes_parser.print_help()
+    elif args.command == "exec":
+        args.func(args)
     else:
         parser.print_help()
 
