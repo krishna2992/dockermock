@@ -216,6 +216,18 @@ def mount_nullfs(path:str, from_path:str, flags=0):
     libc.nmount.restype = ctypes.c_int
     return libc.nmount(iov_array, len(iov_array), flags)
 
+def mount_unionfs(image_root, container_root, flags=0):
+    iovecs = []
+    iovecs.extend(str_iovec("fstype", "unionfs"))
+    iovecs.extend(str_iovec("fspath", container_root))
+    iovecs.extend(str_iovec("from", image_root))
+    iovecs.extend(int_iovec("below", 1))
+    iovecs.extend(int_iovec("noatime", 1))
+    iovecs.extend(str_iovec("copymode", "transparent"))
+    iovecs.extend(str_iovec("whiteout", "whenneeded"))
+    iov_array = (Iovec * len(iovecs))(*iovecs)
+    return  libc.nmount(iov_array, len(iov_array), flags)
+    
 def unmount(path):
     logger.debug(f"Unmouting: {path}")
     res = libc.unmount(path.encode('utf-8'), 0)

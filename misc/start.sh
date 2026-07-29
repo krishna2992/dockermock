@@ -9,4 +9,10 @@ fi
 
 . env/bin/activate
 
-python server.py
+
+LOGFILE="server.log"
+daemon -o "$LOGFILE" -p server.pid python server.py
+
+echo "Server started."
+echo "PID: $!"
+echo "Log: $LOGFILE"

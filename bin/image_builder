@@ -157,7 +157,7 @@ class MiniImageBuilder:
         step = 0
         try:
             print('Mounting rootfs:', self.rootfs)
-            mount_devfs(self.rootfs)
+            mount_devfs(os.path.join(self.rootfs, 'dev'))
             with open(path) as f:
                 for line in f:
                     
@@ -175,6 +175,12 @@ class MiniImageBuilder:
         finally:
             print('Unmounting rootfs:', self.rootfs)
             unmount_jail_defvs(self.rootfs)
+            print(f'Clearing image tmp dir')
+            try:
+                self.cmd_RUN('rm -rf /tmp/*')
+                self.cmd_RUN('ASSUME_ALWAYS_YES=true rm -rf /var/cache/pkg/* ; rm -rf /var/db/pkg/repos/*')
+            except Exception as e:
+                print(f'Error: {e}')
 
 
 # ---------------------------
@@ -230,7 +236,6 @@ if __name__ == "__main__":
 
     builder = MiniImageBuilder(args.rootfs)
     print(args.rootfs)
-    exit(0)
     
     builder.parse_dockerfile(dockerfile_path)
 

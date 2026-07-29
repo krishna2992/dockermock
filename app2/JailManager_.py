@@ -763,4 +763,7 @@ class JailManager:
             return None, 'No such Image'
         
         columns = [col[0] for col in self.cursor.description]
-        return dict(zip(columns, res)), None
+        image = dict(zip(columns, res))
+        json_data = json.loads(image.pop('json_data'))
+        image.update(json_data) 
+        return image, None

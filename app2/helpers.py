@@ -212,6 +212,7 @@ def unmount_jail_defvs(path):
     root = path
     dev_path = os.path.join(root, 'dev')
     try:
+        print(f'Unmounting: {dev_path}')
         unmount(dev_path)
         return CENOERR
     except OSError as e:

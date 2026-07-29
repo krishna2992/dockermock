@@ -5,3 +5,7 @@ env/
 log/
 
 parent.log
+
+server.log
+
+*.json
