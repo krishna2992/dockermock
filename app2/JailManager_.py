@@ -15,22 +15,40 @@ from .helpers import *
 import ctypes
 from app2.dns import SubnetTrie, DnsTree
 from app2.network import *
-from app2.zfs import clone_dataset, get_dataset, delete_dataset
+
 from app2.pf.pf import (
     pfctl_table_add_addrs_list, 
     pfctl_append_rdr_rule_generic, 
     pfctl_table_del_addrs, 
     pfctl_table_del_addr_list, 
     pfctl_remove_rdr_port_rule, 
-    pfctl_clear_ruleset
+    pfctl_clear_ruleset,
+    pfctl_append_nat_rule_generic,
+    pfctl_remove_nat_port_rule,
+    pfctl_enable,
+    pfctl_disable,
 )
+import configparser
 import logging
-
 logger = logging.getLogger(__name__)
 
-CONTAINER_ROOT = 'zroot/jails/containers'
-IMAGE_ROOT = 'zroot/jails/images'
-CONF_ROOT = './conf'
+config = configparser.ConfigParser()
+config.read("config.conf")
+driver = config["storage"]["driver"].lower()
+
+if driver == "zfs":
+    from app2.zfs import clone_dataset, get_dataset, delete_dataset
+    CONTAINER_ROOT = 'zroot/jails/containers'
+    IMAGE_ROOT = 'zroot/jails/images'
+elif driver == "ufs":
+    from app2.ufs import clone_dataset, get_dataset, delete_dataset
+    CONTAINER_ROOT = '/jails/containers'
+    IMAGE_ROOT = '/jails/images'
+else:
+    print('Unknown driver {driver}\nDefaulting to zfs')
+    from app2.zfs import clone_dataset, get_dataset, delete_dataset
+    CONTAINER_ROOT = 'zroot/jails/containers'
+    IMAGE_ROOT = 'zroot/jails/images'
 
 VOLUME_MOUNT_ROOT = '/jails/volumes'
 CONTAINER_MOUNT_ROOT = '/jails/containers' 
@@ -103,8 +121,13 @@ class JailManager:
     def set_sysctls(self):
         logger.info('Enable IP forwarding ...')
         sysctl_set_int("net.inet.ip.forwarding", 1)
-        # sysctl_set_int("net.pf.filter_local", 1)
         logger.info('IP forwarding Enabled...')
+        if sysctl_get_int("net.pf.filter_local") == 0:
+            logger.warning("Found net.pf.filter_local=0\nSetting net.pf.filter_local=1")
+            sysctl_set_int("net.pf.filter_local", 1)
+            logger.info("Restarting pf")
+            pfctl_disable()
+            pfctl_enable()
 
     def get_status_alpha(self, status):
         if status>=100:
@@ -248,6 +271,7 @@ class JailManager:
                 proto = socket.IPPROTO_UDP if port.get('proto')=='udp' else socket.IPPROTO_TCP
                 for net in networks:
                     pfctl_remove_rdr_port_rule(f'cni-rdr/{net}', port['host'], proto)
+                    pfctl_remove_nat_port_rule(f'cni-rdr/{net}', port['container'], proto)
         except Exception as e:
             logger.error(f'{e}')
             
@@ -675,6 +699,24 @@ class JailManager:
                 af=proto,
                 quick=1 
             )
+        
+            # Add Nat rule
+            try:
+                pfctl_append_nat_rule_generic(
+                    network, 
+                    f'cni-rdr/{network}',
+                    '(lo0)', 
+                    rdr[0], 
+                    [network], 
+                    -1,
+                    -1,
+                    container,
+                    af=proto
+                )
+            except Exception as e:
+                logger.exception("Failed to add NAT Rule", exc_info=e)
+                traceback.print_exc()
+                
             
         return 0, ''
 
@@ -704,12 +746,16 @@ class JailManager:
         return None, 'Error'
 
     def remove_container(self, name):
-        cont = self.cursor.execute('select ID, status from containers where name=?', (name,)).fetchone()
+        cont = self.cursor.execute('select ID, status, gid from containers where name=?', (name,)).fetchone()
         if not cont:
             return f"Container {name} not found"
         if cont[1]=='running' and jail_get_id(name) != -1:
             return "Container is running. Stop and retry"
-        res, err = delete_dataset(os.path.join(CONTAINER_ROOT, name))
+        if driver == 'ufs':
+            ds_path = os.path.join(CONTAINER_ROOT, os.path.join(res[2], 'root'))
+        else:
+            ds_path = os.path.join(CONTAINER_ROOT, res[2])
+        res, err = delete_dataset(ds_path)
         if res< 0:
             return err        
         try:

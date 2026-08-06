@@ -308,7 +308,11 @@ def get_container(args):
         print(res.content)
         return -1    
     data = res.json()
-    return 0
+    return data
+
+def handle_inspect_container(args):
+    cont = get_container(args)
+    print(json.dumps(cont, indent=4))
 
 
     
@@ -417,7 +421,7 @@ def main():
 
     cont_inspect_parser = container_subparsers.add_parser("inspect", help="Get Container Config")
     cont_inspect_parser.add_argument("name", help="ID of the container to inspect")
-    cont_inspect_parser.set_defaults(func=get_container)
+    cont_inspect_parser.set_defaults(func=handle_inspect_container)
     # ----------------------------------------------------
     # docker images  
     # ----------------------------------------------------

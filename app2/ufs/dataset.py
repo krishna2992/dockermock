@@ -9,15 +9,9 @@ def get_dataset(dataset_name:str):
         return None
     return ds
 
-def get_dataset_snapshot(ds, snapshot_name: str):
-    for snapshot in ds.snapshots:
-        if snapshot.snapshot_name == snapshot_name:
-            return snapshot
-    return None
 
-
-def clone_dataset(dataset, snapshot_name: str, targer_dataset:str, mountpoint:str=None):
-    ds = Path(targer_dataset)
+def clone_dataset(dataset, snapshot_name: str, targer_dataset:str, mountpoint:str):
+    ds = Path(mountpoint)
     ds.mkdir(parents=True, exist_ok=True)
     os.chown(ds, 0, 0)
 

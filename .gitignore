@@ -8,4 +8,6 @@ parent.log
 
 server.log
 
+server.pid
+
 *.json

@@ -14,14 +14,22 @@ import traceback
 import os
 import ipaddress
 import logging
-
+import configparser
 logger = logging.getLogger(__name__)
 
 PATH_ENV = {"PATH":"/usr/local/bin:/sbin:/bin:/usr/sbin:/usr/bin:/usr/local/sbin"}
 
-ZFS_ROOT = 'zroot/jails/containers'
+config = configparser.ConfigParser()
+config.read("config.conf")
+driver = config["storage"]["driver"].lower()
 
-CONTROOT = '/jails/containers'
+if driver == "ufs":
+    CONTAINER_ROOT = '/jails/containers'
+    IMAGE_ROOT = '/jails/images'
+else:
+    CONTAINER_ROOT = 'zroot/jails/containers'
+    IMAGE_ROOT = 'zroot/jails/images'
+
 
 VOLUME_MOUNT_ROOT = '/jails/volumes'
 
@@ -86,7 +94,7 @@ class Jail:
             elif fs == 'tmpfs':
                 self.mount_tmpfs()
         
-
+    
     def create_jail(self)-> int:
 
         self.jid = start_jail_from_json(self.json)

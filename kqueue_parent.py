@@ -15,7 +15,6 @@ import ipaddress
 import logging
 
 logger = logging.getLogger(__name__)
-
 # Store Jail Object against Child PID
 JAIL_DICT = {}
 

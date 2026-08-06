@@ -254,6 +254,15 @@ def mount_host_to_jail(jail_path, host_path, flags):
         return CERROR
     return CENOERR
 
+def mount_jail_unionfs(image_path, container_root, flags):
+    res = mount_unionfs(image_path, container_root, flags)
+    if res!=0:
+        errno = ctypes.get_errno()
+        logger.error(f"Failed to Mount {host_path!r} to {jail_path!r}: {os.strerror(errno)}")
+        return CERROR
+    return CENOERR
+
+
 
 def offset_to_netmask(offset):
     n = offset
@@ -290,6 +299,24 @@ def sysctl_set_int(name: str, value: int):
     if ret != 0:
         err = ctypes.get_errno()
         raise OSError(err, f"sysctl {name} failed: {os.strerror(err)}")
+
+def sysctl_get_int(name: str) -> int:
+    val = ctypes.c_uint8()
+    size = ctypes.c_size_t(ctypes.sizeof(val))
+
+    ret = libc.sysctlbyname(
+        name.encode(),
+        ctypes.byref(val),
+        ctypes.byref(size),
+        None,
+        0,
+    )
+
+    if ret != 0:
+        err = ctypes.get_errno()
+        raise OSError(err, os.strerror(err))
+
+    return val.value
     
 def convert_to_bytes(value):
     if isinstance(value, int):

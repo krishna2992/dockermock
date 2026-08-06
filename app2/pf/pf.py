@@ -1,10 +1,13 @@
 from ctypes.util import find_library
 import ctypes
+import functools
 from sys import byteorder 
+import sys
 import os
 import socket
 from typing import List
 from enum import Enum
+from app2.lib import libc
 libpfctl = ctypes.CDLL(find_library("pfctl"), use_errno=True)
 libpf_util = ctypes.CDLL(os.path.join(*(os.path.split(__file__)[:-1] + ('libpf_util.so.2', ))), use_errno=True)
 
@@ -27,6 +30,19 @@ class FilterAddr(ctypes.Structure):
         ('type', ctypes.c_uint8),
         ('addr', ctypes.c_char * MAXPATHLEN)
     ]
+
+libc.fflush.argtypes = [ctypes.c_void_p]
+libc.fflush.restype = ctypes.c_int
+
+def flush_stdout(func):
+    @functools.wraps(func)
+    def wrapper(*args, **kwargs):
+        
+        try:
+            return func(*args, **kwargs)
+        finally:
+            libc.fflush(None)
+    return wrapper
 
 libpf_util.append_rdr_rule.argtypes = [
     ctypes.c_int,          # dev
@@ -690,7 +706,7 @@ libpf_util.clear_ruleset.argtypes = [
 # Define return type
 libpf_util.clear_ruleset.restype = ctypes.c_int
 
-
+@flush_stdout
 def pfctl_clear_ruleset(anchor:str):
     dev = os.open(PF_DEV, os.O_RDWR)
     if(dev == -1):
@@ -715,6 +731,7 @@ def pfctl_clear_ruleset(anchor:str):
 libpf_util.remove_rdr_port_rule.argtypes = [ctypes.c_int, ctypes.c_char_p, ctypes.c_int, ctypes.c_int]
 libpf_util.remove_rdr_port_rule.restype  = ctypes.c_int
 
+@flush_stdout
 def pfctl_remove_rdr_port_rule(anchor: str, port: int, proto: int) -> int:
     """
     Python wrapper for: int remove_rdr_port_rule(int dev, char* anchor, int port, int proto)
@@ -745,6 +762,7 @@ def pfctl_remove_rdr_port_rule(anchor: str, port: int, proto: int) -> int:
 libpf_util.remove_nat_port_rule.argtypes = [ctypes.c_int, ctypes.c_char_p, ctypes.c_int, ctypes.c_int]
 libpf_util.remove_nat_port_rule.restype  = ctypes.c_int
 
+@flush_stdout
 def pfctl_remove_nat_port_rule(anchor: str, port: int, proto: int) -> int:
     """
     Python wrapper for: int remove_rdr_port_rule(int dev, char* anchor, int port, int proto)
@@ -774,7 +792,7 @@ def pfctl_remove_nat_port_rule(anchor: str, port: int, proto: int) -> int:
 
 libpf_util.clear_nat_ruleset.restype = ctypes.c_int
 
-
+@flush_stdout
 def pfctl_clear_nat_ruleset(anchor:str):
     dev = os.open(PF_DEV, os.O_RDWR)
     if(dev == -1):
@@ -814,8 +832,8 @@ libpf_util.append_nat_rule_generic.argtypes = [
 # Define return type
 libpf_util.append_nat_rule_generic.restype = ctypes.c_int
 
-
-def pfctl_append_nat_rule_generic(if_name:str, anchor:str, src: str, dst: str,  rdr_address: List[str], rdr_port: int, src_port: int=-1, dst_port:int=-1, af=socket.IPPROTO_TCP, quick=0):
+@flush_stdout
+def pfctl_append_nat_rule_generic(if_name:str, anchor:str, src: str, dst: str,  rdr_address: List[str], rdr_port: int=-1, src_port: int=-1, dst_port:int=-1, af=socket.IPPROTO_TCP, quick=0):
     dev = os.open(PF_DEV, os.O_RDWR)
     if(dev == -1):
         errno = ctypes.get_errno()
@@ -889,6 +907,7 @@ libpf_util.append_nat_rule_src_if.argtypes = [
 # Define return type
 libpf_util.append_nat_rule_src_if.restype = ctypes.c_int
 
+@flush_stdout
 def pfctl_append_nat_rule_src_if(if_name:str, anchor:str, src_if: str, dst_address: str,  rdr_address: List[str], rdr_port: int, src_port: int=-1, dst_port:int=-1, af=socket.IPPROTO_TCP):
     dev = os.open(PF_DEV, os.O_RDWR)
     if(dev == -1):
@@ -929,3 +948,52 @@ def pfctl_append_nat_rule_src_if(if_name:str, anchor:str, src_if: str, dst_addre
     if res:
         err = ctypes.get_errno()
         raise OSError(err, f"pfctl_append_rdr_rule_src_if: {os.strerror(err)}")
+
+libpf_util.enable.argtypes = [
+    ctypes.c_int                     # int dev
+]
+libpf_util.enable.restype = ctypes.c_int
+
+@flush_stdout
+def pfctl_enable():
+    dev = os.open(PF_DEV, os.O_RDWR)
+    if(dev == -1):
+        errno = ctypes.get_errno()
+        raise OSError(errno, f"Failed to open: {PF_DEV}")        
+    try:        
+        res = libpf_util.enable(
+            dev
+        )
+    finally:
+        # Close anyway
+        print('Closing dev')
+        os.close(dev)
+    
+    if res:
+        err = ctypes.get_errno()
+        raise OSError(err, f"pfctl_enable: {os.strerror(err)}")
+
+
+libpf_util.disable.argtypes = [
+    ctypes.c_int                     # int dev
+]
+libpf_util.disable.restype = ctypes.c_int
+
+@flush_stdout
+def pfctl_disable():
+    dev = os.open(PF_DEV, os.O_RDWR)
+    if(dev == -1):
+        errno = ctypes.get_errno()
+        raise OSError(errno, f"Failed to open: {PF_DEV}")        
+    try:        
+        res = libpf_util.disable(
+            dev
+        )
+    finally:
+        # Close anyway
+        print('Closing dev')
+        os.close(dev)
+    
+    if res:
+        err = ctypes.get_errno()
+        raise OSError(err, f"pfctl_enable: {os.strerror(err)}")

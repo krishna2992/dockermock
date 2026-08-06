@@ -11,6 +11,7 @@ from dnslib import DNSRecord, RR, QTYPE, A  # Make sure this import is at top
 from .SubnetTrie import SubnetTrie
 from .DnsTree import DnsTree
 
+logger = logging.getLogger(__name__)
 
 system_resolvers = dns.resolver.get_default_resolver().nameservers
 

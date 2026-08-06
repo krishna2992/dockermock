@@ -1632,7 +1632,7 @@ int remove_nth_rule(int dev, int r_num, char* anchor, int action)
     strlcpy(pr.anchor, anchor, sizeof(pr.anchor));
     if (ioctl(dev, DIOCCHANGERULE, &pr) < 0) 
     {
-        perror("ioctl get ticket");
+        perror("ioctl change remove");
         return -1;
     }
     return 0;
@@ -2103,12 +2103,13 @@ int remove_nat_port_rule(int dev, char* anchor, int port, int proto)
     printf("Total Rules: %d\n", total);
     for(i=0; i< total; i++)
     {
-        pr.rule.action = PF_RDR;
+        pr.rule.action = PF_NAT;
         strlcpy(pr.anchor, anchor, sizeof(pr.anchor));
         pr.nr = i;
+        ticket = pr.ticket;
 
 #if __FreeBSD_version >= 1500000
-
+        nvl = nvlist_create(0);
         nvlist_add_number(nvl, "ruleset", PF_NAT);   // main ruleset
         nvlist_add_number(nvl, "ticket", ticket);     // usually 0 for read
         nvlist_add_number(nvl, "nr", i);         // rule index
@@ -2473,5 +2474,23 @@ int append_nat_rule_generic(int dev, char* if_name, char* anchor, filter_addr* s
     }
 
     printf("Rule appended successfully.\n");
+    return 0;
+}
+
+int enable(int dev)
+{
+    if(ioctl(dev, DIOCSTART, (void*)0) < 0){
+        perror("DIOCSTART");
+        return -1;
+    }
+    return 0;
+}
+
+int disable(int dev)
+{
+    if(ioctl(dev, DIOCSTOP, (void*)0) < 0){
+        perror("DIOCSTOP");
+        return -1;
+    }
     return 0;
 }
